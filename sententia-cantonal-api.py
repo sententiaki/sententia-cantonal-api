@@ -4,13 +4,13 @@ Backend dedicato alla ricerca delle sentenze cantonali ticinesi su www.sentenze.
 
 Funzionamento:
   1. Riceve la query naturale dell'utente
-  2. La trasforma con Claude nella forma ottimale per il motore di sentenze.ti.ch
+  2. La trasforma con OpenAI nella forma ottimale per il motore di sentenze.ti.ch
   3. Interroga il portale ufficiale
   4. Estrae e restituisce i risultati strutturati
 
 Avvio:
-  pip install fastapi uvicorn httpx beautifulsoup4 anthropic
-  ANTHROPIC_API_KEY=sk-... uvicorn sententia-cantonal-api:app --port 8001 --reload
+  pip install fastapi uvicorn httpx beautifulsoup4 openai
+  OPENAI_API_KEY=sk-... uvicorn sententia-cantonal-api:app --port 8001 --reload
 """
 
 import re
@@ -24,7 +24,7 @@ from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-import anthropic
+from openai import OpenAI
 
 # ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -137,9 +137,9 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
     Chiama Claude per trasformare la query naturale nella forma ottimale
     per il motore di sentenze.ti.ch.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        log.warning("ANTHROPIC_API_KEY non impostata – uso query diretta")
+        log.warning("OPENAI_API_KEY non impostata – uso query diretta")
         return {
             "query_ottimizzata": query_utente,
             "tipo_ricerca": "testo",
@@ -147,21 +147,18 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
             "spiegazione": "Query inviata direttamente (API key assente)",
         }
 
-    client = anthropic.Anthropic(api_key=api_key)
+    client = OpenAI(api_key=api_key)
     try:
-        message = client.messages.create(
-            model="claude-opus-4-6",
+        message = client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=400,
-            system=SYSTEM_PROMPT,
             messages=[
-                {
-                    "role": "user",
-                    "content": USER_PROMPT_TEMPLATE.format(query=query_utente),
-                }
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(query=query_utente)},
             ],
         )
-        raw = message.content[0].text.strip()
-        log.info("Claude response: %s", raw)
+        raw = message.choices[0].message.content.strip()
+        log.info("OpenAI response: %s", raw)
 
         # Estrai JSON
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
@@ -176,12 +173,12 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
             "spiegazione": "Trasformazione non riuscita – query diretta",
         }
     except Exception as exc:
-        log.error("Errore Claude: %s", exc)
+        log.error("Errore OpenAI: %s", exc)
         return {
             "query_ottimizzata": query_utente,
             "tipo_ricerca": "testo",
             "tribunale": "",
-            "spiegazione": f"Errore Claude: {exc}",
+            "spiegazione": f"Errore OpenAI: {exc}",
         }
 
 
@@ -375,10 +372,10 @@ async def riassumi_cantonale(
     """
     Scarica il testo di una sentenza cantonale ticinese e lo riassume con Claude.
     """
-    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return JSONResponse(
-            {"errore": "ANTHROPIC_API_KEY non configurata sul server."},
+            {"errore": "OPENAI_API_KEY non configurata sul server."},
             status_code=500,
         )
 
@@ -415,23 +412,20 @@ async def riassumi_cantonale(
             status_code=400,
         )
 
-    # ── Riassunto con Claude ─────────────────────────────────────────────────
+    # ── Riassunto con OpenAI ──────────────────────────────────────────────────
     try:
-        ai_client = anthropic.Anthropic(api_key=api_key)
-        message = ai_client.messages.create(
-            model="claude-opus-4-6",
+        ai_client = OpenAI(api_key=api_key)
+        message = ai_client.chat.completions.create(
+            model="gpt-4o-mini",
             max_tokens=1200,
-            system=SUMMARY_SYSTEM,
             messages=[
-                {
-                    "role": "user",
-                    "content": SUMMARY_USER.format(testo=testo),
-                }
+                {"role": "system", "content": SUMMARY_SYSTEM},
+                {"role": "user", "content": SUMMARY_USER.format(testo=testo)},
             ],
         )
-        riassunto = message.content[0].text
+        riassunto = message.choices[0].message.content
     except Exception as exc:
-        return JSONResponse({"errore": f"Errore Claude: {exc}"}, status_code=500)
+        return JSONResponse({"errore": f"Errore OpenAI: {exc}"}, status_code=500)
 
     return JSONResponse({"riassunto": riassunto, "url": url})
 
