@@ -487,6 +487,42 @@ async def ricerca_cantonale(
     })
 
 
+@app.get("/html_cantonale")
+async def html_cantonale(
+    url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
+):
+    """
+    Scarica e restituisce l'HTML pulito della sentenza (con grassetti, corsivi, tabelle)
+    per la visualizzazione completa con elementi originali nel frontend.
+    """
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:
+            return JSONResponse(
+                {"errore": f"Impossibile scaricare la sentenza: {exc}"},
+                status_code=502,
+            )
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    # Rimuovi elementi di navigazione, script, form
+    for tag in soup.find_all(["nav", "header", "footer", "script", "style", "form", "noscript"]):
+        tag.decompose()
+    # Rimuovi anche il banner/logo del portale (prima tabella)
+    tables = soup.find_all("table")
+    if tables:
+        tables[0].decompose()
+
+    content_el = soup.find("body") or soup
+    html_content = str(content_el)
+
+    if len(html_content) < 50:
+        return JSONResponse({"errore": "Contenuto non trovato nella pagina."}, status_code=400)
+
+    return JSONResponse({"html": html_content, "url": url})
+
+
 @app.get("/testo_cantonale")
 async def testo_cantonale(
     url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
