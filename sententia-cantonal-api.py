@@ -487,6 +487,42 @@ async def ricerca_cantonale(
     })
 
 
+@app.get("/testo_cantonale")
+async def testo_cantonale(
+    url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
+):
+    """
+    Scarica e restituisce il testo pulito di una sentenza cantonale,
+    per la visualizzazione in anteprima nel frontend.
+    """
+    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
+        try:
+            resp = await client.get(url)
+            resp.raise_for_status()
+        except Exception as exc:
+            return JSONResponse(
+                {"errore": f"Impossibile scaricare la sentenza: {exc}"},
+                status_code=502,
+            )
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
+        tag.decompose()
+
+    content_el = (
+        soup.find("div", class_=re.compile(r"content|document|testo|sentenza|main|article", re.I))
+        or soup.find("article")
+        or soup.find("main")
+        or soup.find("body")
+    )
+    testo = content_el.get_text("\n", strip=True) if content_el else ""
+
+    if len(testo) < 30:
+        return JSONResponse({"errore": "Testo non trovato nella pagina."}, status_code=400)
+
+    return JSONResponse({"testo": testo, "url": url})
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "portale": PORTAL_BASE}
