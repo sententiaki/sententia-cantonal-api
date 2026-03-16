@@ -44,7 +44,22 @@ app.add_middleware(
 )
 
 # ─── Constants ───────────────────────────────────────────────────────────────
-PORTAL_BASE = "https://www.sentenze.ti.ch"
+PORTAL_BASE   = "https://www.sentenze.ti.ch"
+PORTAL_SEARCH = "https://www.sentenze.ti.ch/findinfo/ti/cerca.htm"
+PORTAL_CGI    = "https://www.sentenze.ti.ch/cgi-bin/nph-omniscgi"
+
+# Omnis Studio hidden fields required by the CGI (from form inspection)
+OMNIS_HIDDEN = {
+    "OmnisPlatform":   "WINDOWS",
+    "WebServerUrl":    "www.sentenze.ti.ch",
+    "WebServerScript": "/cgi-bin/nph-omniscgi",
+    "OmnisLibrary":    "JURISWEB",
+    "OmnisClass":      "rtFindinfoWebHtmlService",
+    "OmnisServer":     "JURISWEB,193.246.182.54:6000",
+    "Parametername":   "WWWTI",
+    "Schema":          "TI_WEB",
+    "Source":          "",
+}
 
 # Tribunali cantonali ticinesi (D.1 del manuale)
 COURT_NAMES: dict[str, str] = {
@@ -184,12 +199,12 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
 
 # ─── Ricerca sul portale ─────────────────────────────────────────────────────
 
-# Mappa tipo ricerca → valore parametro HTTP (da verificare sul portale reale)
-TIPO_RICERCA_MAP: dict[str, str] = {
-    "testo":    "2",
-    "titolo":   "1",
-    "articoli": "3",
-    "indice":   "4",
+# Mappa tipo ricerca → valore del parametro cSuchstringZiel
+TIPO_ZIEL_MAP: dict[str, str] = {
+    "testo":    "testo",
+    "titolo":   "titolo",
+    "articoli": "articoli",
+    "indice":   "indice",
 }
 
 
@@ -202,68 +217,78 @@ async def cerca_sul_portale(
     portata: Optional[str] = None,
 ) -> list[dict]:
     """
-    Interroga www.sentenze.ti.ch e ritorna una lista di risultati strutturati.
+    Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
 
-    Il portale usa probabilmente un form GET o POST alla pagina /Cerca.
-    Questa funzione prima scarica la pagina di ricerca per rilevare la struttura
-    del form, poi invia la ricerca con i parametri corretti.
+    Step 1: scarica la pagina di ricerca per ottenere i campi hidden e le checkbox
+            dei tribunali così come appaiono nel form reale.
+    Step 2: POST al CGI con tutti i parametri corretti.
     """
-    tipo_val = TIPO_RICERCA_MAP.get(tipo, "2")
-    params: dict[str, str] = {"query": query, "searchType": tipo_val}
-    if tribunale:
-        params["tribunale"] = tribunale
-    if anno_da:
-        params["annoDa"] = anno_da
-    if anno_a:
-        params["annoA"] = anno_a
-    if portata:
-        for p in portata.split(","):
-            p = p.strip()
-            if p:
-                params[f"portata_{p}"] = "on"
-
     async with httpx.AsyncClient(
         timeout=30.0,
         follow_redirects=True,
         headers=HTTP_HEADERS,
     ) as client:
 
-        # ── Step 1: ottieni la pagina di ricerca per trovare l'action del form ──
-        form_action = PORTAL_BASE + "/Cerca"
+        # ── Step 1: scarica il form di ricerca ───────────────────────────────
+        params: dict[str, str] = dict(OMNIS_HIDDEN)
+        form_action = PORTAL_CGI
         try:
-            home = await client.get(PORTAL_BASE + "/Cerca")
-            soup_home = BeautifulSoup(home.text, "html.parser")
-            form = soup_home.find("form")
-            if form and form.get("action"):
-                action = form["action"]
-                form_action = (
-                    action if action.startswith("http") else PORTAL_BASE + action
-                )
-                # Leggi anche i campi hidden del form
+            form_resp = await client.get(PORTAL_SEARCH)
+            soup_form = BeautifulSoup(form_resp.text, "html.parser")
+            form = soup_form.find("form")
+            if form:
+                action = form.get("action", "")
+                if action:
+                    form_action = action if action.startswith("http") else PORTAL_BASE + action
+
+                # Tutti i campi hidden del form
                 for hidden in form.find_all("input", type="hidden"):
                     name = hidden.get("name", "")
-                    val = hidden.get("value", "")
-                    if name and name not in params:
+                    val  = hidden.get("value", "")
+                    if name:
                         params[name] = val
-            log.info("Form action: %s | params: %s", form_action, params)
+
+                # Checkbox dei tribunali
+                for cb in form.find_all("input", {"type": "checkbox"}):
+                    name = cb.get("name", "")
+                    val  = cb.get("value", "")
+                    if not name or not val:
+                        continue
+                    if tribunale:
+                        # Filtra per un tribunale specifico
+                        if val == tribunale:
+                            params[name] = val
+                    else:
+                        # Tutti i tribunali
+                        params[name] = val
+
+            log.info("Form action: %s | court filter: %s", form_action, tribunale or "tutti")
         except Exception as exc:
-            log.warning("Impossibile caricare la pagina di ricerca: %s", exc)
+            log.warning("Impossibile caricare il form (%s) – uso parametri di fallback", exc)
+            # Fallback: aggiungi manualmente tutti i tribunali noti
+            if tribunale:
+                params[f"bInfoArt_{tribunale}1"] = tribunale
+            else:
+                for court in COURT_NAMES:
+                    params[f"bInfoArt_{court}1"] = court
+
+        # ── Parametri di ricerca ─────────────────────────────────────────────
+        params["Aufruf"]                = "validate"
+        params["Template"]              = "results/resultpage_ita.fiw"
+        params["cSprache"]              = "ITA"
+        params["cSuchstring"]           = query
+        params["cSuchstringZiel"]       = TIPO_ZIEL_MAP.get(tipo, "testo")
+        params["nSeite"]                = "1"
+        params["nAnzahlTrefferProSeite"] = "10"
+        params["cButtonAction"]         = "3. Trova"
+
+        log.info("POST %s | query='%s' tipo='%s'", form_action, query, params["cSuchstringZiel"])
 
         # ── Step 2: invia la ricerca ─────────────────────────────────────────
-        response = None
         try:
             response = await client.post(form_action, data=params)
-            if response.status_code not in (200, 302):
-                response = await client.get(form_action, params=params)
         except Exception as exc:
-            log.warning("POST fallito (%s), provo GET", exc)
-            try:
-                response = await client.get(form_action, params=params)
-            except Exception as exc2:
-                log.error("Anche GET fallito: %s", exc2)
-                return []
-
-        if response is None:
+            log.error("POST fallito: %s", exc)
             return []
 
         log.info("Risposta portale: status=%s len=%d", response.status_code, len(response.text))
@@ -274,37 +299,43 @@ def parse_results(html: str) -> list[dict]:
     """
     Estrae i risultati dalla pagina HTML di sentenze.ti.ch.
 
-    Il portale (2005, aggiornato) mostra tipicamente i risultati in una tabella
-    o in una lista di elementi, ognuno con titolo/link, tribunale, date e incarto.
-    Questa funzione usa una serie di euristiche progressive per adattarsi alla
-    struttura effettiva del portale – da verificare e affinare con l'HTML reale.
+    Struttura reale del portale: ogni risultato contiene un link
+    con href che include "getMarkupDocument" e title="Sentenza numero incarto {XX.YYYY.ZZ}".
+    Il testo del link è il sommario della sentenza.
+    Nell'elemento padre si trovano Autorità, date e numero incarto.
     """
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict] = []
 
-    # ── Tentativo 1: righe di tabella con link ───────────────────────────────
-    all_rows = soup.find_all("tr")
-    for row in all_rows:
-        link_el = row.find("a", href=True)
-        if not link_el:
-            continue
+    # Tutti i link alle sentenze hanno "getMarkupDocument" nell'href
+    links = soup.find_all("a", href=lambda h: h and "getMarkupDocument" in h)
+
+    for link_el in links[:10]:
         href = link_el["href"]
-        if not href or href == "#":
-            continue
-        url = href if href.startswith("http") else PORTAL_BASE + href
+        url  = href if href.startswith("http") else PORTAL_BASE + href
 
-        cells = row.find_all(["td", "th"])
-        text_full = row.get_text(" ", strip=True)
+        # Testo del link = sommario della sentenza
+        titolo = link_el.get_text(strip=True)
 
-        title = link_el.get_text(strip=True) or text_full[:120]
-        dates = DATE_PATTERN.findall(text_full)
-        court_m = COURT_PATTERN.search(text_full)
-        court = court_m.group(1) if court_m else ""
-        incarto_m = INCARTO_PATTERN.search(text_full)
-        incarto = incarto_m.group(0) if incarto_m else ""
+        # title attribute = "Sentenza numero incarto 52.2015.575"
+        title_attr = link_el.get("title", "")
+        incarto_m  = INCARTO_PATTERN.search(title_attr)
+        incarto    = incarto_m.group(0) if incarto_m else ""
+
+        # Testo dell'elemento padre (tabella del singolo risultato)
+        parent = link_el.find_parent("table")
+        block_text = parent.get_text(" ", strip=True) if parent else ""
+
+        dates    = DATE_PATTERN.findall(block_text)
+        court_m  = COURT_PATTERN.search(block_text)
+        court    = court_m.group(1) if court_m else ""
+
+        if not incarto:
+            im = INCARTO_PATTERN.search(block_text)
+            incarto = im.group(0) if im else ""
 
         results.append({
-            "titolo":             title,
+            "titolo":             titolo,
             "tribunale":          court,
             "nome_tribunale":     COURT_NAMES.get(court, ""),
             "data_decisione":     dates[0] if len(dates) > 0 else "",
@@ -312,37 +343,6 @@ def parse_results(html: str) -> list[dict]:
             "numero_incarto":     incarto,
             "url_originale":      url,
         })
-        if len(results) >= 10:
-            break
-
-    # ── Tentativo 2: elementi con classi comuni dei CMS svizzeri ────────────
-    if not results:
-        candidates = (
-            soup.find_all(class_=re.compile(r"result|sentenza|decision|item|entry", re.I))
-            or soup.find_all("li")
-        )
-        for el in candidates[:10]:
-            link_el = el.find("a", href=True)
-            if not link_el:
-                continue
-            href = link_el["href"]
-            url = href if href.startswith("http") else PORTAL_BASE + href
-            text_full = el.get_text(" ", strip=True)
-            title = link_el.get_text(strip=True) or text_full[:120]
-            dates = DATE_PATTERN.findall(text_full)
-            court_m = COURT_PATTERN.search(text_full)
-            court = court_m.group(1) if court_m else ""
-            incarto_m = INCARTO_PATTERN.search(text_full)
-            incarto = incarto_m.group(0) if incarto_m else ""
-            results.append({
-                "titolo":             title,
-                "tribunale":          court,
-                "nome_tribunale":     COURT_NAMES.get(court, ""),
-                "data_decisione":     dates[0] if len(dates) > 0 else "",
-                "data_pubblicazione": dates[1] if len(dates) > 1 else "",
-                "numero_incarto":     incarto,
-                "url_originale":      url,
-            })
 
     log.info("Risultati estratti: %d", len(results))
     return results
