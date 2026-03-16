@@ -121,7 +121,8 @@ OPERATORI SUPPORTATI:
 - AND: ricerca più gruppi di parole: "stato di ebrietà" AND "incidente mortale"
 - OR: alternativa tra gruppi: "stato di ebrietà" OR "stato di ubriachezza"
 - NOT: esclude parole: "stato di ebrietà" NOT "autoveicolo"
-- NEAR con numero (max distanza): automobile, incidente, 10
+
+IMPORTANTE: usa SEMPRE AND per combinare i termini. Non usare mai NEAR.
 
 TIPI DI RICERCA:
 - "testo": ricerca nel testo completo (catalogate e non catalogate) – usa per concetti giuridici, fatti
