@@ -506,7 +506,7 @@ async def html_cantonale(
                 status_code=502,
             )
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.content, "html.parser")
     # Rimuovi elementi di navigazione, script, form
     for tag in soup.find_all(["nav", "header", "footer", "script", "style", "form", "noscript"]):
         tag.decompose()
@@ -542,7 +542,7 @@ async def testo_cantonale(
                 status_code=502,
             )
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(resp.content, "html.parser")
     for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
         tag.decompose()
 
