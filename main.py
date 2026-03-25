@@ -209,6 +209,16 @@ TIPO_ZIEL_MAP: dict[str, str] = {
 }
 
 
+# Mappa area frontend ‚Üí nome del checkbox di gruppo sul portale
+AREA_GROUP_CHECKBOX: dict[str, str] = {
+    "privato":  "bInfoArt_Privatrecht1",
+    "pubblico": "bInfoArt_OeffentlichesRecht1",
+    "penale":   "bInfoArt_Strafrecht1",
+}
+# Tutti i nomi dei checkbox di gruppo (per escluderli quando si usa un tribunale specifico)
+ALL_GROUP_CHECKBOXES = set(AREA_GROUP_CHECKBOX.values())
+
+
 async def cerca_sul_portale(
     query: str,
     tipo: str,
@@ -216,7 +226,7 @@ async def cerca_sul_portale(
     anno_da: Optional[str] = None,
     anno_a: Optional[str] = None,
     portata: Optional[str] = None,
-    tribunali: Optional[set] = None,
+    area: Optional[str] = None,
 ) -> list[dict]:
     """
     Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
@@ -257,21 +267,31 @@ async def cerca_sul_portale(
                     portata_filter = {PORTATA_MAP.get(p.strip(), p.strip()) for p in portata.split(",")}
 
                 # Checkbox: tribunali (bInfoArt_*) e portata (F30_ENTSCHEID_TYP_*)
+                # Strategia:
+                #   tribunale specifico ‚Üí solo il suo checkbox individuale (es. bInfoArt_ICCA1)
+                #   area(e) selezionate ‚Üí solo i checkbox di gruppo corrispondenti
+                #                         (es. bInfoArt_Privatrecht1 per "privato")
+                #   nessun filtro       ‚Üí tutti e 3 i checkbox di gruppo (tutti i tribunali)
+                areas_set: set[str] = set(area.split(",")) if area else set()
+                target_groups: set[str] = {
+                    AREA_GROUP_CHECKBOX[a] for a in areas_set if a in AREA_GROUP_CHECKBOX
+                } if areas_set else ALL_GROUP_CHECKBOXES
+
                 for cb in form.find_all("input", {"type": "checkbox"}):
                     name = cb.get("name", "")
                     val  = cb.get("value", "")
                     if not name or not val:
                         continue
                     if name.startswith("bInfoArt_"):
-                        # Checkbox tribunali
                         if tribunale:
-                            if val == tribunale:
+                            # Tribunale specifico: solo il suo checkbox individuale
+                            if name == f"bInfoArt_{tribunale}1":
                                 params[name] = val
-                        elif tribunali:
-                            if val in tribunali:
+                        elif name in ALL_GROUP_CHECKBOXES:
+                            # Checkbox di gruppo: includi se appartiene alle aree target
+                            if name in target_groups:
                                 params[name] = val
-                        else:
-                            params[name] = val
+                        # Checkbox individuali: li saltiamo quando usiamo i gruppi
                     elif val in ("NUOVO", "CONFERMA", "SENZA"):
                         # Checkbox portata
                         if not portata_filter or val in portata_filter:
@@ -280,17 +300,20 @@ async def cerca_sul_portale(
                         # Altri checkbox: includi sempre
                         params[name] = val
 
-            log.info("Form action: %s | court=%s | portata=%s", form_action, tribunale or "tutti", portata or "tutte")
+            log.info("Form action: %s | court=%s | area=%s | portata=%s",
+                     form_action, tribunale or "‚Äî", area or "tutti", portata or "tutte")
         except Exception as exc:
             log.warning("Impossibile caricare il form (%s) ‚Äì uso parametri di fallback", exc)
             if tribunale:
                 params[f"bInfoArt_{tribunale}1"] = tribunale
-            elif tribunali:
-                for court in tribunali:
-                    params[f"bInfoArt_{court}1"] = court
             else:
-                for court in COURT_NAMES:
-                    params[f"bInfoArt_{court}1"] = court
+                areas_fb = set(area.split(",")) if area else set(AREA_GROUP_CHECKBOX.keys())
+                for a in areas_fb:
+                    cb_name = AREA_GROUP_CHECKBOX.get(a)
+                    if cb_name:
+                        # valore del gruppo (formato portale: "ICCA','IICCA',...")
+                        # non conosciamo il valore esatto, usiamo il nome dell'area come fallback
+                        params[cb_name] = a
 
         # ‚îÄ‚îÄ Parametri di ricerca ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
         params["Aufruf"]                = "validate"
@@ -469,8 +492,8 @@ async def riassumi_cantonale(
 async def ricerca_cantonale(
     query: str = Query(..., min_length=2, description="Query in linguaggio naturale"),
     tipo_override: Optional[str] = Query(None, description="Forza tipo ricerca: testo|titolo|articoli|indice"),
-    tribunale_override: Optional[str] = Query(None, description="Forza tribunale (sigla)"),
-    tribunali_override: Optional[str] = Query(None, description="Lista sig–ª–µ tribunali separati da virgola (per filtro area)"),
+    tribunale_override: Optional[str] = Query(None, description="Forza tribunale specifico (sigla)"),
+    area_override: Optional[str] = Query(None, description="Filtra per area: privato,pubblico,penale (comma-separated)"),
     anno_da: Optional[str] = Query(None, description="Anno inizio periodo"),
     anno_a: Optional[str] = Query(None, description="Anno fine periodo"),
     portata: Optional[str] = Query(None, description="Portata giuridica: P,C,N (comma-separated)"),
@@ -485,24 +508,23 @@ async def ricerca_cantonale(
       3. Parsing e strutturazione dei risultati
       4. Restituzione JSON al frontend
     """
-    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s tribunali=%s periodo=%s-%s portata=%s",
-             query, tipo_override, tribunale_override, tribunali_override, anno_da, anno_a, portata)
+    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
+             query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
 
     # Step 1 ‚Äì Trasformazione query con Claude
     trasf = trasforma_query_con_claude(query)
     query_opt = trasf.get("query_ottimizzata", query)
     tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
     tribunale = tribunale_override if tribunale_override else trasf.get("tribunale", "")
-    tribunali = set(tribunali_override.split(",")) if tribunali_override else None
     spiegazione = trasf.get("spiegazione", "")
 
-    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | tribunali: %s", query_opt, tipo, tribunale, tribunali)
+    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
 
     # Step 2 ‚Äì Ricerca sul portale (con parametri extra opzionali)
     risultati = await cerca_sul_portale(
         query_opt, tipo, tribunale,
         anno_da=anno_da, anno_a=anno_a, portata=portata,
-        tribunali=tribunali,
+        area=area_override,
     )
 
     # Post-filtro per anno (sicurezza: il portale CGI potrebbe non rispettare i parametri data)
