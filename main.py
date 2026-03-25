@@ -216,6 +216,7 @@ async def cerca_sul_portale(
     anno_da: Optional[str] = None,
     anno_a: Optional[str] = None,
     portata: Optional[str] = None,
+    tribunali: Optional[set] = None,
 ) -> list[dict]:
     """
     Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
@@ -266,6 +267,9 @@ async def cerca_sul_portale(
                         if tribunale:
                             if val == tribunale:
                                 params[name] = val
+                        elif tribunali:
+                            if val in tribunali:
+                                params[name] = val
                         else:
                             params[name] = val
                     elif val in ("NUOVO", "CONFERMA", "SENZA"):
@@ -281,6 +285,9 @@ async def cerca_sul_portale(
             log.warning("Impossibile caricare il form (%s) ‚Äì uso parametri di fallback", exc)
             if tribunale:
                 params[f"bInfoArt_{tribunale}1"] = tribunale
+            elif tribunali:
+                for court in tribunali:
+                    params[f"bInfoArt_{court}1"] = court
             else:
                 for court in COURT_NAMES:
                     params[f"bInfoArt_{court}1"] = court
@@ -463,6 +470,7 @@ async def ricerca_cantonale(
     query: str = Query(..., min_length=2, description="Query in linguaggio naturale"),
     tipo_override: Optional[str] = Query(None, description="Forza tipo ricerca: testo|titolo|articoli|indice"),
     tribunale_override: Optional[str] = Query(None, description="Forza tribunale (sigla)"),
+    tribunali_override: Optional[str] = Query(None, description="Lista sig–ª–µ tribunali separati da virgola (per filtro area)"),
     anno_da: Optional[str] = Query(None, description="Anno inizio periodo"),
     anno_a: Optional[str] = Query(None, description="Anno fine periodo"),
     portata: Optional[str] = Query(None, description="Portata giuridica: P,C,N (comma-separated)"),
@@ -477,22 +485,24 @@ async def ricerca_cantonale(
       3. Parsing e strutturazione dei risultati
       4. Restituzione JSON al frontend
     """
-    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s periodo=%s-%s portata=%s",
-             query, tipo_override, tribunale_override, anno_da, anno_a, portata)
+    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s tribunali=%s periodo=%s-%s portata=%s",
+             query, tipo_override, tribunale_override, tribunali_override, anno_da, anno_a, portata)
 
     # Step 1 ‚Äì Trasformazione query con Claude
     trasf = trasforma_query_con_claude(query)
     query_opt = trasf.get("query_ottimizzata", query)
     tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
     tribunale = tribunale_override if tribunale_override else trasf.get("tribunale", "")
+    tribunali = set(tribunali_override.split(",")) if tribunali_override else None
     spiegazione = trasf.get("spiegazione", "")
 
-    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s", query_opt, tipo, tribunale)
+    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | tribunali: %s", query_opt, tipo, tribunale, tribunali)
 
     # Step 2 ‚Äì Ricerca sul portale (con parametri extra opzionali)
     risultati = await cerca_sul_portale(
         query_opt, tipo, tribunale,
         anno_da=anno_da, anno_a=anno_a, portata=portata,
+        tribunali=tribunali,
     )
 
     # Post-filtro per anno (sicurezza: il portale CGI potrebbe non rispettare i parametri data)
