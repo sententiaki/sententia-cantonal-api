@@ -1,5 +1,5 @@
 """
-Sententia – Cantonal API
+Sententia - Cantonal API  [v2025-03-25]
 Backend dedicato alla ricerca delle sentenze cantonali ticinesi su www.sentenze.ti.ch
 
 Funzionamento:
