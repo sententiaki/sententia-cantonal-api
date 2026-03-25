@@ -1,5 +1,5 @@
 """
-Sententia ‚Äì Cantonal API
+Sententia – Cantonal API
 Backend dedicato alla ricerca delle sentenze cantonali ticinesi su www.sentenze.ti.ch
 
 Funzionamento:
@@ -26,13 +26,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from openai import OpenAI
 
-# ‚îÄ‚îÄ‚îÄ Logging ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ‚îÄ‚îÄ‚îÄ App ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── App ────────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="Sententia ‚Äì Cantonal API",
+    title="Sententia – Cantonal API",
     description="Ricerca sentenze cantonali ticinesi tramite www.sentenze.ti.ch",
     version="1.0.0",
 )
@@ -43,7 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ‚îÄ‚îÄ‚îÄ Constants ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Constants ───────────────────────────────────────────────────────────────
 PORTAL_BASE   = "https://www.sentenze.ti.ch"
 PORTAL_SEARCH = "https://www.sentenze.ti.ch/findinfo/ti/cerca.htm"
 PORTAL_CGI    = "https://www.sentenze.ti.ch/cgi-bin/nph-omniscgi"
@@ -108,27 +108,27 @@ HTTP_HEADERS = {
     "Accept-Language": "it-CH,it;q=0.9,en;q=0.5",
 }
 
-# ‚îÄ‚îÄ‚îÄ Claude: trasformazione della query ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Claude: trasformazione della query ─────────────────────────────────────
 
 SYSTEM_PROMPT = """Sei un esperto di ricerca giuridica del Canton Ticino.
-Il tuo compito √® trasformare la query naturale dell'utente nella forma ottimale
+Il tuo compito è trasformare la query naturale dell'utente nella forma ottimale
 per il motore di ricerca del portale www.sentenze.ti.ch.
 
 Regole del motore di ricerca (dal manuale ufficiale del portale):
 
 OPERATORI SUPPORTATI:
-- Virgolette per frasi esatte: "stato di ebriet√†"
-- AND: ricerca pi√π gruppi di parole: "stato di ebriet√†" AND "incidente mortale"
-- OR: alternativa tra gruppi: "stato di ebriet√†" OR "stato di ubriachezza"
-- NOT: esclude parole: "stato di ebriet√†" NOT "autoveicolo"
+- Virgolette per frasi esatte: "stato di ebrietà"
+- AND: ricerca più gruppi di parole: "stato di ebrietà" AND "incidente mortale"
+- OR: alternativa tra gruppi: "stato di ebrietà" OR "stato di ubriachezza"
+- NOT: esclude parole: "stato di ebrietà" NOT "autoveicolo"
 
 IMPORTANTE: usa SEMPRE AND per combinare i termini. Non usare mai NEAR.
 
 TIPI DI RICERCA:
-- "testo": ricerca nel testo completo (catalogate e non catalogate) ‚Äì usa per concetti giuridici, fatti
-- "titolo": ricerca nel titolo (solo catalogate) ‚Äì usa per parole chiave semplici e precise
-- "articoli": ricerca per articolo di legge ‚Äì usa SOLO se la query contiene "art." + numero + abbreviazione legge
-- "indice": ricerca per parole chiave dell'indice ‚Äì usa per termini giuridici standard
+- "testo": ricerca nel testo completo (catalogate e non catalogate) – usa per concetti giuridici, fatti
+- "titolo": ricerca nel titolo (solo catalogate) – usa per parole chiave semplici e precise
+- "articoli": ricerca per articolo di legge – usa SOLO se la query contiene "art." + numero + abbreviazione legge
+- "indice": ricerca per parole chiave dell'indice – usa per termini giuridici standard
 
 FORMATO ARTICOLI: art. 41 co (CO = codice delle obbligazioni, CP = codice penale, CC = codice civile, ecc.)
 
@@ -155,7 +155,7 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
     """
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
-        log.warning("OPENAI_API_KEY non impostata ‚Äì uso query diretta")
+        log.warning("OPENAI_API_KEY non impostata – uso query diretta")
         return {
             "query_ottimizzata": query_utente,
             "tipo_ricerca": "testo",
@@ -186,7 +186,7 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
             "query_ottimizzata": query_utente,
             "tipo_ricerca": "testo",
             "tribunale": "",
-            "spiegazione": "Trasformazione non riuscita ‚Äì query diretta",
+            "spiegazione": "Trasformazione non riuscita – query diretta",
         }
     except Exception as exc:
         log.error("Errore OpenAI: %s", exc)
@@ -198,9 +198,9 @@ def trasforma_query_con_claude(query_utente: str) -> dict:
         }
 
 
-# ‚îÄ‚îÄ‚îÄ Ricerca sul portale ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Ricerca sul portale ─────────────────────────────────────────────────────
 
-# Mappa tipo ricerca ‚Üí valore del parametro cSuchstringZiel
+# Mappa tipo ricerca → valore del parametro cSuchstringZiel
 TIPO_ZIEL_MAP: dict[str, str] = {
     "testo":    "testo",
     "titolo":   "titolo",
@@ -209,14 +209,28 @@ TIPO_ZIEL_MAP: dict[str, str] = {
 }
 
 
-# Mappa area frontend ‚Üí nome del checkbox di gruppo sul portale
-AREA_GROUP_CHECKBOX: dict[str, str] = {
-    "privato":  "bInfoArt_Privatrecht1",
-    "pubblico": "bInfoArt_OeffentlichesRecht1",
-    "penale":   "bInfoArt_Strafrecht1",
+# Mappa area → TUTTI i checkbox da spuntare (gruppo + individuali).
+# Verificato sul portale reale: il click sul gruppo attiva JS che spunta anche gli individuali.
+# Per il POST CGI bisogna inviare entrambi.
+AREA_CHECKBOXES: dict[str, list[str]] = {
+    "privato": [
+        "bInfoArt_Privatrecht1",
+        "bInfoArt_ICCA1", "bInfoArt_IICCA1", "bInfoArt_IIICC1",
+        "bInfoArt_CCR1", "bInfoArt_CCC1", "bInfoArt_CEF1", "bInfoArt_CDP1",
+    ],
+    "pubblico": [
+        "bInfoArt_OeffentlichesRecht1",
+        "bInfoArt_TRAM1", "bInfoArt_TPT1", "bInfoArt_TCA1",
+        "bInfoArt_CDT1", "bInfoArt_TE1",
+    ],
+    "penale": [
+        "bInfoArt_Strafrecht1",
+        "bInfoArt_PENAL1", "bInfoArt_CARP1", "bInfoArt_CCRP1", "bInfoArt_CRPTI1",
+        "bInfoArt_CRP1", "bInfoArt_GPC1", "bInfoArt_GIAR1", "bInfoArt_PRPEN1",
+    ],
 }
-# Tutti i nomi dei checkbox di gruppo (per escluderli quando si usa un tribunale specifico)
-ALL_GROUP_CHECKBOXES = set(AREA_GROUP_CHECKBOX.values())
+# Set di tutti i checkbox bInfoArt_* conosciuti
+ALL_KNOWN_CHECKBOXES: set[str] = {cb for cbs in AREA_CHECKBOXES.values() for cb in cbs}
 
 
 async def cerca_sul_portale(
@@ -232,7 +246,7 @@ async def cerca_sul_portale(
     Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
 
     Step 1: scarica la pagina di ricerca per ottenere i campi hidden e le checkbox
-            dei tribunali cos√¨ come appaiono nel form reale.
+            dei tribunali così come appaiono nel form reale.
     Step 2: POST al CGI con tutti i parametri corretti.
     """
     async with httpx.AsyncClient(
@@ -241,7 +255,7 @@ async def cerca_sul_portale(
         headers=HTTP_HEADERS,
     ) as client:
 
-        # ‚îÄ‚îÄ Step 1: scarica il form di ricerca ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+        # ── Step 1: scarica il form di ricerca ───────────────────────────────
         params: dict[str, str] = dict(OMNIS_HIDDEN)
         form_action = PORTAL_CGI
         try:
@@ -260,22 +274,24 @@ async def cerca_sul_portale(
                     if name:
                         params[name] = val
 
-                # Mappa portata frontend (P/C/N) ‚Üí valore portale (NUOVO/CONFERMA/SENZA)
+                # Mappa portata frontend (P/C/N) → valore portale (NUOVO/CONFERMA/SENZA)
                 PORTATA_MAP = {"P": "NUOVO", "C": "CONFERMA", "N": "SENZA"}
                 portata_filter: set[str] = set()
                 if portata:
                     portata_filter = {PORTATA_MAP.get(p.strip(), p.strip()) for p in portata.split(",")}
 
                 # Checkbox: tribunali (bInfoArt_*) e portata (F30_ENTSCHEID_TYP_*)
-                # Strategia:
-                #   tribunale specifico ‚Üí solo il suo checkbox individuale (es. bInfoArt_ICCA1)
-                #   area(e) selezionate ‚Üí solo i checkbox di gruppo corrispondenti
-                #                         (es. bInfoArt_Privatrecht1 per "privato")
-                #   nessun filtro       ‚Üí tutti e 3 i checkbox di gruppo (tutti i tribunali)
-                areas_set: set[str] = set(area.split(",")) if area else set()
-                target_groups: set[str] = {
-                    AREA_GROUP_CHECKBOX[a] for a in areas_set if a in AREA_GROUP_CHECKBOX
-                } if areas_set else ALL_GROUP_CHECKBOXES
+                # Calcola il set di checkbox bInfoArt_* da includere nel POST:
+                #   tribunale specifico → solo il suo checkbox individuale
+                #   area(e) selezionate → gruppo + tutti gli individuali dell'area
+                #   nessun filtro       → tutti i checkbox conosciuti
+                if tribunale:
+                    allowed_cbs: set[str] = {f"bInfoArt_{tribunale}1"}
+                elif area:
+                    areas_set = set(area.split(","))
+                    allowed_cbs = {cb for a in areas_set for cb in AREA_CHECKBOXES.get(a, [])}
+                else:
+                    allowed_cbs = ALL_KNOWN_CHECKBOXES
 
                 for cb in form.find_all("input", {"type": "checkbox"}):
                     name = cb.get("name", "")
@@ -283,15 +299,8 @@ async def cerca_sul_portale(
                     if not name or not val:
                         continue
                     if name.startswith("bInfoArt_"):
-                        if tribunale:
-                            # Tribunale specifico: solo il suo checkbox individuale
-                            if name == f"bInfoArt_{tribunale}1":
-                                params[name] = val
-                        elif name in ALL_GROUP_CHECKBOXES:
-                            # Checkbox di gruppo: includi se appartiene alle aree target
-                            if name in target_groups:
-                                params[name] = val
-                        # Checkbox individuali: li saltiamo quando usiamo i gruppi
+                        if name in allowed_cbs:
+                            params[name] = val
                     elif val in ("NUOVO", "CONFERMA", "SENZA"):
                         # Checkbox portata
                         if not portata_filter or val in portata_filter:
@@ -300,22 +309,20 @@ async def cerca_sul_portale(
                         # Altri checkbox: includi sempre
                         params[name] = val
 
-            log.info("Form action: %s | court=%s | area=%s | portata=%s",
-                     form_action, tribunale or "‚Äî", area or "tutti", portata or "tutte")
+            log.info("Form action: %s | court=%s | area=%s | cbs=%d | portata=%s",
+                     form_action, tribunale or "—", area or "tutti", len(allowed_cbs), portata or "tutte")
         except Exception as exc:
-            log.warning("Impossibile caricare il form (%s) ‚Äì uso parametri di fallback", exc)
+            log.warning("Impossibile caricare il form (%s) – uso parametri di fallback", exc)
             if tribunale:
                 params[f"bInfoArt_{tribunale}1"] = tribunale
             else:
-                areas_fb = set(area.split(",")) if area else set(AREA_GROUP_CHECKBOX.keys())
+                areas_fb = set(area.split(",")) if area else set(AREA_CHECKBOXES.keys())
                 for a in areas_fb:
-                    cb_name = AREA_GROUP_CHECKBOX.get(a)
-                    if cb_name:
-                        # valore del gruppo (formato portale: "ICCA','IICCA',...")
-                        # non conosciamo il valore esatto, usiamo il nome dell'area come fallback
-                        params[cb_name] = a
+                    for cb_name in AREA_CHECKBOXES.get(a, []):
+                        # Nel fallback non conosciamo il valore esatto, usiamo il codice corte
+                        params[cb_name] = cb_name.replace("bInfoArt_", "").rstrip("1")
 
-        # ‚îÄ‚îÄ Parametri di ricerca ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+        # ── Parametri di ricerca ─────────────────────────────────────────────
         params["Aufruf"]                = "validate"
         params["Template"]              = "results/resultpage_ita.fiw"
         params["cSprache"]              = "ITA"
@@ -325,7 +332,7 @@ async def cerca_sul_portale(
         params["nAnzahlTrefferProSeite"] = "10"
         params["cButtonAction"]         = "3. Trova"
 
-        # ‚îÄ‚îÄ Filtro temporale (anno) ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+        # ── Filtro temporale (anno) ───────────────────────────────────────────
         if anno_da:
             params["cEntscheiddatumVonJahr"]  = str(anno_da)
             params["cEntscheiddatumVonMonat"] = ""
@@ -336,7 +343,7 @@ async def cerca_sul_portale(
         log.info("POST %s | query='%s' tipo='%s' periodo=%s-%s",
                  form_action, query, params["cSuchstringZiel"], anno_da or "*", anno_a or "*")
 
-        # ‚îÄ‚îÄ Step 2: invia la ricerca ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+        # ── Step 2: invia la ricerca ─────────────────────────────────────────
         try:
             response = await client.post(form_action, data=params)
         except Exception as exc:
@@ -355,8 +362,8 @@ def parse_results(html: str) -> list[dict]:
 
     Struttura reale del portale: ogni risultato contiene un link
     con href che include "getMarkupDocument" e title="Sentenza numero incarto {XX.YYYY.ZZ}".
-    Il testo del link √® il sommario della sentenza.
-    Nell'elemento padre si trovano Autorit√†, date e numero incarto.
+    Il testo del link è il sommario della sentenza.
+    Nell'elemento padre si trovano Autorità, date e numero incarto.
     """
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict] = []
@@ -404,7 +411,7 @@ def parse_results(html: str) -> list[dict]:
     return results
 
 
-# ‚îÄ‚îÄ‚îÄ Riassunto di una sentenza cantonale ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Riassunto di una sentenza cantonale ────────────────────────────────────
 
 SUMMARY_SYSTEM = """Sei un esperto legale svizzero specializzato in diritto cantonale ticinese.
 Fornisci riassunti chiari, precisi e professionali delle sentenze."""
@@ -435,7 +442,7 @@ async def riassumi_cantonale(
             status_code=500,
         )
 
-    # ‚îÄ‚îÄ Scarica la sentenza ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+    # ── Scarica la sentenza ──────────────────────────────────────────────────
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
         try:
             resp = await client.get(url)
@@ -468,7 +475,7 @@ async def riassumi_cantonale(
             status_code=400,
         )
 
-    # ‚îÄ‚îÄ Riassunto con OpenAI ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+    # ── Riassunto con OpenAI ──────────────────────────────────────────────────
     try:
         ai_client = OpenAI(api_key=api_key)
         message = ai_client.chat.completions.create(
@@ -486,7 +493,7 @@ async def riassumi_cantonale(
     return JSONResponse({"riassunto": riassunto, "url": url})
 
 
-# ‚îÄ‚îÄ‚îÄ Endpoint principale: ricerca cantonale ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Endpoint principale: ricerca cantonale ──────────────────────────────────
 
 @app.get("/ricerca_cantonale")
 async def ricerca_cantonale(
@@ -502,7 +509,7 @@ async def ricerca_cantonale(
     Ricerca sentenze cantonali ticinesi su www.sentenze.ti.ch.
 
     Pipeline:
-      1. Claude trasforma la query naturale ‚Üí query ottimizzata per il portale
+      1. Claude trasforma la query naturale → query ottimizzata per il portale
          (tipo e tribunale vengono sovrascritti se passati come override)
       2. Ricerca sul portale ufficiale
       3. Parsing e strutturazione dei risultati
@@ -511,7 +518,7 @@ async def ricerca_cantonale(
     log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
              query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
 
-    # Step 1 ‚Äì Trasformazione query con Claude
+    # Step 1 – Trasformazione query con Claude
     trasf = trasforma_query_con_claude(query)
     query_opt = trasf.get("query_ottimizzata", query)
     tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
@@ -520,7 +527,7 @@ async def ricerca_cantonale(
 
     log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
 
-    # Step 2 ‚Äì Ricerca sul portale (con parametri extra opzionali)
+    # Step 2 – Ricerca sul portale (con parametri extra opzionali)
     risultati = await cerca_sul_portale(
         query_opt, tipo, tribunale,
         anno_da=anno_da, anno_a=anno_a, portata=portata,
@@ -636,7 +643,7 @@ def health():
     return {"status": "ok", "portale": PORTAL_BASE}
 
 
-# ‚îÄ‚îÄ‚îÄ Entry point ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ
+# ─── Entry point ─────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)
