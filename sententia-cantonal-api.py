@@ -317,6 +317,8 @@ def parse_results(html: str) -> list[dict]:
 
         # Testo del link = sommario della sentenza
         titolo = link_el.get_text(strip=True)
+        # Fix CP1252 control chars (U+0091-0094) che appaiono come cubo invece di apostrofo/virgolette
+        titolo = titolo.replace('\u0091','\u2018').replace('\u0092','\u2019').replace('\u0093','\u201c').replace('\u0094','\u201d')
 
         # title attribute = "Sentenza numero incarto 52.2015.575"
         title_attr = link_el.get("title", "")
@@ -469,6 +471,19 @@ async def ricerca_cantonale(
         query_opt, tipo, tribunale,
         anno_da=anno_da, anno_a=anno_a, portata=portata,
     )
+
+    # Post-filtro anno: il portale CGI potrebbe non rispettare i parametri data
+    if anno_da or anno_a:
+        def _year(d: str) -> int:
+            try: return int(d.split(".")[-1])
+            except: return 0
+        risultati = [
+            r for r in risultati
+            if not r.get("data_decisione") or (
+                (not anno_da or _year(r["data_decisione"]) >= int(anno_da)) and
+                (not anno_a  or _year(r["data_decisione"]) <= int(anno_a))
+            )
+        ]
 
     return JSONResponse({
         "risultati": risultati,
