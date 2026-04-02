@@ -606,15 +606,17 @@ async def ricerca_cantonale(
 
     if is_article_search:
         query_opt  = query_norm
-        tipo       = "articoli"
+        tipo       = "testo"   # tipo "articoli" del portale è inaffidabile → sempre testo
         tribunale  = tribunale_override or ""
-        spiegazione = f"Ricerca per articolo di legge: {query_norm}"
-        log.info("Articolo rilevato → bypass AI | query='%s' tipo='articoli'", query_opt)
+        spiegazione = f"Ricerca nel testo per articolo: {query_norm}"
+        log.info("Articolo rilevato → bypass AI | query='%s' tipo='testo'", query_opt)
     else:
         # Step 1 – Trasformazione query con Claude (solo per query generiche)
         trasf = trasforma_query_con_claude(query_norm)
         query_opt  = trasf.get("query_ottimizzata", query_norm)
-        tipo       = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
+        # Forza sempre "testo": il tipo "articoli" del portale sentenze.ti.ch non funziona
+        raw_tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
+        tipo       = "testo" if raw_tipo == "articoli" else raw_tipo
         tribunale  = tribunale_override if tribunale_override else trasf.get("tribunale", "")
         spiegazione = trasf.get("spiegazione", "")
 
