@@ -150,7 +150,7 @@ ARTICLE_RE = re.compile(
 def normalizza_articoli(query: str) -> str:
     """
     Normalizza qualsiasi forma di riferimento ad un articolo di legge
-    alla forma canonica "art. {num} {CODICE}" (formato atteso dal portale sentenze.ti.ch).
+    alla forma canonica "art. {num} {CODICE}".
 
     Esempi:
       "50 or"        → "art. 50 CO"
@@ -158,7 +158,6 @@ def normalizza_articoli(query: str) -> str:
       "art 50 OR"    → "art. 50 CO"
       "art. 50 OR"   → "art. 50 CO"
       "50 co"        → "art. 50 CO"
-      "50 CP"        → "art. 50 CP"
       "41 ZGB"       → "art. 41 CC"
     """
     def _replace(m: re.Match) -> str:
@@ -168,6 +167,48 @@ def normalizza_articoli(query: str) -> str:
         return f"art. {num} {canonical}"
 
     return ARTICLE_RE.sub(_replace, query)
+
+
+def costruisci_query_con_articolo(query: str) -> tuple[str, str] | None:
+    """
+    Se la query contiene un articolo di legge (puro o misto a testo libero),
+    costruisce una query booleana ottimizzata senza passare dall'AI.
+
+    Esempi:
+      "41 co"                  → 'art. 41 CO'
+      "danno illecito 41 co"   → '"danno illecito" AND "art. 41 CO"'
+      "licenziamento 337 CO"   → '"licenziamento" AND "art. 337 CO"'
+
+    Ritorna (query_ottimizzata, spiegazione) oppure None se nessun articolo trovato.
+    """
+    matches = list(ARTICLE_RE.finditer(query))
+    if not matches:
+        return None
+
+    # Parti di testo libero (togliendo i riferimenti agli articoli)
+    text_only = ARTICLE_RE.sub("", query)
+    text_only = re.sub(r'\s+', ' ', text_only).strip()
+    # Rimuovi operatori booleani rimasti orfani
+    text_only = re.sub(r'\b(AND|OR|NOT)\b', '', text_only, flags=re.IGNORECASE).strip()
+
+    # Articoli normalizzati
+    art_parts = []
+    for m in matches:
+        num      = m.group(1).strip()
+        raw_code = m.group(2).upper()
+        canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
+        art_parts.append(f'"art. {num} {canonical}"')
+
+    if text_only:
+        # Query mista: testo AND articolo
+        query_opt   = f'"{text_only}" AND {" AND ".join(art_parts)}'
+        spiegazione = f'Ricerca per testo e articolo di legge: {text_only} + {", ".join(art_parts)}'
+    else:
+        # Solo articolo: niente virgolette (il portale cerca la stringa esatta)
+        query_opt   = " AND ".join(p.strip('"') for p in art_parts)
+        spiegazione = f'Ricerca per articolo di legge: {query_opt}'
+
+    return query_opt, spiegazione
 
 # HTTP headers
 HTTP_HEADERS = {
@@ -593,29 +634,21 @@ async def ricerca_cantonale(
     log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
              query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
 
-    # Pre-normalizzazione deterministica degli articoli (PRIMA dell'AI)
-    query_norm = normalizza_articoli(query)
-    was_normalized = query_norm != query
-    if was_normalized:
-        log.info("Articolo normalizzato: '%s' → '%s'", query, query_norm)
+    # Prova a costruire una query booleana deterministica se c'è un articolo
+    art_result = costruisci_query_con_articolo(query)
 
-    # Se la query contiene un articolo normalizzato OPPURE il filtro articoli è attivo:
-    # bypassa completamente l'AI e usa la query normalizzata direttamente.
-    # Questo evita che l'AI corrompa il riferimento (es. "art. 50 CO" → "50").
-    is_article_search = was_normalized or (tipo_override == "articoli")
-
-    if is_article_search:
-        query_opt  = query_norm
-        tipo       = "testo"   # tipo "articoli" del portale è inaffidabile → sempre testo
-        tribunale  = tribunale_override or ""
-        spiegazione = f"Ricerca nel testo per articolo: {query_norm}"
-        log.info("Articolo rilevato → bypass AI | query='%s' tipo='testo'", query_opt)
+    if art_result:
+        # Query con articolo (pura o mista): bypass AI, sempre tipo=testo
+        query_opt, spiegazione = art_result
+        tipo      = "testo"
+        tribunale = tribunale_override or ""
+        log.info("Articolo rilevato → bypass AI | query='%s'", query_opt)
     else:
-        # Step 1 – Trasformazione query con Claude (solo per query generiche)
-        trasf = trasforma_query_con_claude(query_norm)
-        query_opt  = trasf.get("query_ottimizzata", query_norm)
-        # Forza sempre "testo": il tipo "articoli" del portale sentenze.ti.ch non funziona
-        raw_tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
+        # Query generica: usa AI
+        trasf = trasforma_query_con_claude(query)
+        query_opt  = trasf.get("query_ottimizzata", query)
+        # Forza sempre "testo": tipo "articoli" del portale sentenze.ti.ch non funziona
+        raw_tipo   = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
         tipo       = "testo" if raw_tipo == "articoli" else raw_tipo
         tribunale  = tribunale_override if tribunale_override else trasf.get("tribunale", "")
         spiegazione = trasf.get("spiegazione", "")
