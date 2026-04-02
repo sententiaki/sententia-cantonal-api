@@ -97,6 +97,77 @@ DATE_PATTERN = re.compile(r"\d{2}\.\d{2}\.\d{4}")
 # Numero di incarto (es. 12.2021.234)
 INCARTO_PATTERN = re.compile(r"\d+\.\d{4}\.\d+")
 
+# ─── Normalizzazione articoli di legge ───────────────────────────────────────
+
+# Mappa abbreviazioni → forma canonica italiana (case-insensitive lookup via .upper())
+LAW_CODE_ALIASES: dict[str, str] = {
+    # Tedesco → Italiano
+    "OR":     "CO",     # Obligationenrecht → Codice delle Obbligazioni
+    "ZGB":    "CC",     # Zivilgesetzbuch → Codice Civile
+    "STGB":   "CP",     # Strafgesetzbuch → Codice Penale
+    "ZPO":    "CPC",    # Zivilprozessordnung → Codice di Procedura Civile
+    "STPO":   "CPP",    # Strafprozessordnung → Codice di Procedura Penale
+    "VWVG":   "PA",     # Verwaltungsverfahrensgesetz → Legge procedura amm.va
+    "BGG":    "LTF",    # Bundesgerichtsgesetz → Legge Tribunale Federale
+    "MSCHG":  "LPM",    # Markenschutzgesetz → Legge Protezione Marchi
+    # Francese → Italiano (dove diverso)
+    "CCS":    "CC",     # Code Civil Suisse
+    # Già canonici (normalizza solo maiuscole)
+    "CO":     "CO",
+    "CP":     "CP",
+    "CC":     "CC",
+    "CPC":    "CPC",
+    "CPP":    "CPP",
+    "LTF":    "LTF",
+    "PA":     "PA",
+    "LAINF":  "LAINF",
+    "LAA":    "LAINF",  # alias tedesco
+    "LAMAL":  "LAMal",
+    "LCA":    "LCA",
+    "LDIP":   "LDIP",
+    "LEF":    "LEF",
+    "LIFD":   "LIFD",
+    "LIVA":   "LIVA",
+    "LCD":    "LCD",
+    "LCART":  "LCart",
+    "LFUS":   "LFus",
+    "LPM":    "LPM",
+    "LLCA":   "LCA",
+    "AVS":    "LAVS",
+    "LAVS":   "LAVS",
+    "AI":     "LAI",
+    "LAI":    "LAI",
+}
+
+# Pattern articolo: optional "art."/"art " + numero (+ cpv/abs opzionale) + codice noto
+_CODES_RE = "|".join(sorted(LAW_CODE_ALIASES.keys(), key=len, reverse=True))
+ARTICLE_RE = re.compile(
+    r"(?:art\.?\s+)?(\d+(?:\s*(?:cpv|abs|al|lit|lett)\.?\s*\d*)*)\s+(" + _CODES_RE + r")\b",
+    re.IGNORECASE,
+)
+
+
+def normalizza_articoli(query: str) -> str:
+    """
+    Normalizza qualsiasi forma di riferimento ad un articolo di legge
+    alla forma canonica "Art. {num} {CODICE}".
+
+    Esempi:
+      "50 or"        → "Art. 50 CO"
+      "50 OR"        → "Art. 50 CO"
+      "art 50 OR"    → "Art. 50 CO"
+      "art. 50 OR"   → "Art. 50 CO"
+      "50 co"        → "Art. 50 CO"
+      "41 or cpv 2"  → "Art. 41 OR cpv 2 CO"  (gestito parzialmente)
+    """
+    def _replace(m: re.Match) -> str:
+        num      = m.group(1).strip()
+        raw_code = m.group(2).upper()
+        canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
+        return f"Art. {num} {canonical}"
+
+    return ARTICLE_RE.sub(_replace, query)
+
 # HTTP headers
 HTTP_HEADERS = {
     "User-Agent": (
@@ -130,7 +201,10 @@ TIPI DI RICERCA:
 - "articoli": ricerca per articolo di legge – usa SOLO se la query contiene "art." + numero + abbreviazione legge
 - "indice": ricerca per parole chiave dell'indice – usa per termini giuridici standard
 
-FORMATO ARTICOLI: art. 41 co (CO = codice delle obbligazioni, CP = codice penale, CC = codice civile, ecc.)
+FORMATO ARTICOLI: Art. 41 CO  (la forma è già normalizzata prima di arrivare a te — rispettala sempre)
+Abbreviazioni principali: CO (Codice Obbligazioni / tedesco: OR), CP (Codice Penale / StGB),
+CC (Codice Civile / ZGB), CPC (Procedura Civile / ZPO), CPP (Procedura Penale / StPO),
+LTF (Tribunale Federale / BGG), LEF, LIFD, LIVA, LAMal, LAINF, LDIP, LCA, LCD.
 
 ABBREVIAZIONI TRIBUNALI:
 ICCA, IICCA, CCC, CEF, TRAM, TPT, TCA, CDT, TE, PENAL, CCRP, CRP, GIAR, PRPEN
@@ -209,6 +283,30 @@ TIPO_ZIEL_MAP: dict[str, str] = {
 }
 
 
+# Mappa area → TUTTI i checkbox da spuntare (gruppo + individuali).
+# Verificato sul portale reale: il click sul gruppo attiva JS che spunta anche gli individuali.
+# Per il POST CGI bisogna inviare entrambi.
+AREA_CHECKBOXES: dict[str, list[str]] = {
+    "privato": [
+        "bInfoArt_Privatrecht1",
+        "bInfoArt_ICCA1", "bInfoArt_IICCA1", "bInfoArt_IIICC1",
+        "bInfoArt_CCR1", "bInfoArt_CCC1", "bInfoArt_CEF1", "bInfoArt_CDP1",
+    ],
+    "pubblico": [
+        "bInfoArt_OeffentlichesRecht1",
+        "bInfoArt_TRAM1", "bInfoArt_TPT1", "bInfoArt_TCA1",
+        "bInfoArt_CDT1", "bInfoArt_TE1",
+    ],
+    "penale": [
+        "bInfoArt_Strafrecht1",
+        "bInfoArt_PENAL1", "bInfoArt_CARP1", "bInfoArt_CCRP1", "bInfoArt_CRPTI1",
+        "bInfoArt_CRP1", "bInfoArt_GPC1", "bInfoArt_GIAR1", "bInfoArt_PRPEN1",
+    ],
+}
+# Set di tutti i checkbox bInfoArt_* conosciuti
+ALL_KNOWN_CHECKBOXES: set[str] = {cb for cbs in AREA_CHECKBOXES.values() for cb in cbs}
+
+
 async def cerca_sul_portale(
     query: str,
     tipo: str,
@@ -216,6 +314,7 @@ async def cerca_sul_portale(
     anno_da: Optional[str] = None,
     anno_a: Optional[str] = None,
     portata: Optional[str] = None,
+    area: Optional[str] = None,
 ) -> list[dict]:
     """
     Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
@@ -249,29 +348,53 @@ async def cerca_sul_portale(
                     if name:
                         params[name] = val
 
-                # Checkbox dei tribunali
+                # Mappa portata frontend (P/C/N) → valore portale (NUOVO/CONFERMA/SENZA)
+                PORTATA_MAP = {"P": "NUOVO", "C": "CONFERMA", "N": "SENZA"}
+                portata_filter: set[str] = set()
+                if portata:
+                    portata_filter = {PORTATA_MAP.get(p.strip(), p.strip()) for p in portata.split(",")}
+
+                # Checkbox: tribunali (bInfoArt_*) e portata (F30_ENTSCHEID_TYP_*)
+                # Calcola il set di checkbox bInfoArt_* da includere nel POST:
+                #   tribunale specifico → solo il suo checkbox individuale
+                #   area(e) selezionate → gruppo + tutti gli individuali dell'area
+                #   nessun filtro       → tutti i checkbox conosciuti
+                if tribunale:
+                    allowed_cbs: set[str] = {f"bInfoArt_{tribunale}1"}
+                elif area:
+                    areas_set = set(area.split(","))
+                    allowed_cbs = {cb for a in areas_set for cb in AREA_CHECKBOXES.get(a, [])}
+                else:
+                    allowed_cbs = ALL_KNOWN_CHECKBOXES
+
                 for cb in form.find_all("input", {"type": "checkbox"}):
                     name = cb.get("name", "")
                     val  = cb.get("value", "")
                     if not name or not val:
                         continue
-                    if tribunale:
-                        # Filtra per un tribunale specifico
-                        if val == tribunale:
+                    if name.startswith("bInfoArt_"):
+                        if name in allowed_cbs:
+                            params[name] = val
+                    elif val in ("NUOVO", "CONFERMA", "SENZA"):
+                        # Checkbox portata
+                        if not portata_filter or val in portata_filter:
                             params[name] = val
                     else:
-                        # Tutti i tribunali
+                        # Altri checkbox: includi sempre
                         params[name] = val
 
-            log.info("Form action: %s | court filter: %s", form_action, tribunale or "tutti")
+            log.info("Form action: %s | court=%s | area=%s | cbs=%d | portata=%s",
+                     form_action, tribunale or "—", area or "tutti", len(allowed_cbs), portata or "tutte")
         except Exception as exc:
             log.warning("Impossibile caricare il form (%s) – uso parametri di fallback", exc)
-            # Fallback: aggiungi manualmente tutti i tribunali noti
             if tribunale:
                 params[f"bInfoArt_{tribunale}1"] = tribunale
             else:
-                for court in COURT_NAMES:
-                    params[f"bInfoArt_{court}1"] = court
+                areas_fb = set(area.split(",")) if area else set(AREA_CHECKBOXES.keys())
+                for a in areas_fb:
+                    for cb_name in AREA_CHECKBOXES.get(a, []):
+                        # Nel fallback non conosciamo il valore esatto, usiamo il codice corte
+                        params[cb_name] = cb_name.replace("bInfoArt_", "").rstrip("1")
 
         # ── Parametri di ricerca ─────────────────────────────────────────────
         params["Aufruf"]                = "validate"
@@ -283,7 +406,16 @@ async def cerca_sul_portale(
         params["nAnzahlTrefferProSeite"] = "10"
         params["cButtonAction"]         = "3. Trova"
 
-        log.info("POST %s | query='%s' tipo='%s'", form_action, query, params["cSuchstringZiel"])
+        # ── Filtro temporale (anno) ───────────────────────────────────────────
+        if anno_da:
+            params["cEntscheiddatumVonJahr"]  = str(anno_da)
+            params["cEntscheiddatumVonMonat"] = ""
+        if anno_a:
+            params["cEntscheiddatumBisJahr"]  = str(anno_a)
+            params["cEntscheiddatumBisMonat"] = ""
+
+        log.info("POST %s | query='%s' tipo='%s' periodo=%s-%s",
+                 form_action, query, params["cSuchstringZiel"], anno_da or "*", anno_a or "*")
 
         # ── Step 2: invia la ricerca ─────────────────────────────────────────
         try:
@@ -292,8 +424,10 @@ async def cerca_sul_portale(
             log.error("POST fallito: %s", exc)
             return []
 
-        log.info("Risposta portale: status=%s len=%d", response.status_code, len(response.text))
-        return parse_results(response.text)
+        log.info("Risposta portale: status=%s len=%d", response.status_code, len(response.content))
+        # Decodifica esplicitamente come Windows-1252 (portale legacy italiano)
+        html_text = response.content.decode("cp1252", errors="replace")
+        return parse_results(html_text)
 
 
 def parse_results(html: str) -> list[dict]:
@@ -317,7 +451,7 @@ def parse_results(html: str) -> list[dict]:
 
         # Testo del link = sommario della sentenza
         titolo = link_el.get_text(strip=True)
-        # Fix CP1252 control chars (U+0091-0094) che appaiono come cubo invece di apostrofo/virgolette
+        # Fix: CP1252 control chars (0x91-0x94) che l'html parser non converte
         titolo = titolo.replace('\u0091','\u2018').replace('\u0092','\u2019').replace('\u0093','\u201c').replace('\u0094','\u201d')
 
         # title attribute = "Sentenza numero incarto 52.2015.575"
@@ -393,7 +527,7 @@ async def riassumi_cantonale(
                 status_code=502,
             )
 
-    soup = BeautifulSoup(resp.content, "html.parser")
+    soup = BeautifulSoup(resp.content.decode("cp1252", errors="replace"), "html.parser")
 
     # Rimuovi navigazione e footer
     for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
@@ -439,7 +573,8 @@ async def riassumi_cantonale(
 async def ricerca_cantonale(
     query: str = Query(..., min_length=2, description="Query in linguaggio naturale"),
     tipo_override: Optional[str] = Query(None, description="Forza tipo ricerca: testo|titolo|articoli|indice"),
-    tribunale_override: Optional[str] = Query(None, description="Forza tribunale (sigla)"),
+    tribunale_override: Optional[str] = Query(None, description="Forza tribunale specifico (sigla)"),
+    area_override: Optional[str] = Query(None, description="Filtra per area: privato,pubblico,penale (comma-separated)"),
     anno_da: Optional[str] = Query(None, description="Anno inizio periodo"),
     anno_a: Optional[str] = Query(None, description="Anno fine periodo"),
     portata: Optional[str] = Query(None, description="Portata giuridica: P,C,N (comma-separated)"),
@@ -454,25 +589,38 @@ async def ricerca_cantonale(
       3. Parsing e strutturazione dei risultati
       4. Restituzione JSON al frontend
     """
-    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s periodo=%s-%s portata=%s",
-             query, tipo_override, tribunale_override, anno_da, anno_a, portata)
+    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
+             query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
 
-    # Step 1 – Trasformazione query con Claude
-    trasf = trasforma_query_con_claude(query)
-    query_opt = trasf.get("query_ottimizzata", query)
+    # Pre-normalizzazione deterministica degli articoli (PRIMA dell'AI)
+    query_norm = normalizza_articoli(query)
+    if query_norm != query:
+        log.info("Articolo normalizzato: '%s' → '%s'", query, query_norm)
+
+    # Se la query (normalizzata) è puramente un riferimento ad articolo, salta l'AI
+    # e usa direttamente tipo="articoli"
+    is_pure_article = bool(ARTICLE_RE.fullmatch(query_norm.strip()))
+    if is_pure_article and not tipo_override:
+        tipo_override = "articoli"
+        log.info("Rilevato articolo puro → tipo forzato ad 'articoli'")
+
+    # Step 1 – Trasformazione query con Claude (sulla query normalizzata)
+    trasf = trasforma_query_con_claude(query_norm)
+    query_opt = trasf.get("query_ottimizzata", query_norm)
     tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
     tribunale = tribunale_override if tribunale_override else trasf.get("tribunale", "")
     spiegazione = trasf.get("spiegazione", "")
 
-    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s", query_opt, tipo, tribunale)
+    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
 
     # Step 2 – Ricerca sul portale (con parametri extra opzionali)
     risultati = await cerca_sul_portale(
         query_opt, tipo, tribunale,
         anno_da=anno_da, anno_a=anno_a, portata=portata,
+        area=area_override,
     )
 
-    # Post-filtro anno: il portale CGI potrebbe non rispettare i parametri data
+    # Post-filtro per anno (sicurezza: il portale CGI potrebbe non rispettare i parametri data)
     if anno_da or anno_a:
         def _year(d: str) -> int:
             try: return int(d.split(".")[-1])
@@ -521,7 +669,7 @@ async def html_cantonale(
                 status_code=502,
             )
 
-    soup = BeautifulSoup(resp.content, "html.parser")
+    soup = BeautifulSoup(resp.content.decode("cp1252", errors="replace"), "html.parser")
     # Rimuovi elementi di navigazione, script, form
     for tag in soup.find_all(["nav", "header", "footer", "script", "style", "form", "noscript"]):
         tag.decompose()
@@ -557,7 +705,8 @@ async def testo_cantonale(
                 status_code=502,
             )
 
-    soup = BeautifulSoup(resp.content, "html.parser")
+    html_text = resp.content.decode("cp1252", errors="replace")
+    soup = BeautifulSoup(html_text, "html.parser")
     for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
         tag.decompose()
 
@@ -567,7 +716,7 @@ async def testo_cantonale(
         or soup.find("main")
         or soup.find("body")
     )
-    testo = content_el.get_text("\n", strip=True) if content_el else ""
+    testo = content_el.get_text(" ", strip=True) if content_el else ""
 
     if len(testo) < 30:
         return JSONResponse({"errore": "Testo non trovato nella pagina."}, status_code=400)
