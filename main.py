@@ -1,5 +1,5 @@
 """
-Sententia - Cantonal API  [v2025-03-25]
+Sententia – Cantonal API
 Backend dedicato alla ricerca delle sentenze cantonali ticinesi su www.sentenze.ti.ch
 
 Funzionamento:
@@ -34,7 +34,7 @@ log = logging.getLogger(__name__)
 app = FastAPI(
     title="Sententia – Cantonal API",
     description="Ricerca sentenze cantonali ticinesi tramite www.sentenze.ti.ch",
-    version="2.0.0",
+    version="1.0.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -97,6 +97,78 @@ DATE_PATTERN = re.compile(r"\d{2}\.\d{2}\.\d{4}")
 # Numero di incarto (es. 12.2021.234)
 INCARTO_PATTERN = re.compile(r"\d+\.\d{4}\.\d+")
 
+# ─── Normalizzazione articoli di legge ───────────────────────────────────────
+
+# Mappa abbreviazioni → forma canonica italiana (case-insensitive lookup via .upper())
+LAW_CODE_ALIASES: dict[str, str] = {
+    # Tedesco → Italiano
+    "OR":     "CO",     # Obligationenrecht → Codice delle Obbligazioni
+    "ZGB":    "CC",     # Zivilgesetzbuch → Codice Civile
+    "STGB":   "CP",     # Strafgesetzbuch → Codice Penale
+    "ZPO":    "CPC",    # Zivilprozessordnung → Codice di Procedura Civile
+    "STPO":   "CPP",    # Strafprozessordnung → Codice di Procedura Penale
+    "VWVG":   "PA",     # Verwaltungsverfahrensgesetz → Legge procedura amm.va
+    "BGG":    "LTF",    # Bundesgerichtsgesetz → Legge Tribunale Federale
+    "MSCHG":  "LPM",    # Markenschutzgesetz → Legge Protezione Marchi
+    # Francese → Italiano (dove diverso)
+    "CCS":    "CC",     # Code Civil Suisse
+    # Già canonici (normalizza solo maiuscole)
+    "CO":     "CO",
+    "CP":     "CP",
+    "CC":     "CC",
+    "CPC":    "CPC",
+    "CPP":    "CPP",
+    "LTF":    "LTF",
+    "PA":     "PA",
+    "LAINF":  "LAINF",
+    "LAA":    "LAINF",  # alias tedesco
+    "LAMAL":  "LAMal",
+    "LCA":    "LCA",
+    "LDIP":   "LDIP",
+    "LEF":    "LEF",
+    "LIFD":   "LIFD",
+    "LIVA":   "LIVA",
+    "LCD":    "LCD",
+    "LCART":  "LCart",
+    "LFUS":   "LFus",
+    "LPM":    "LPM",
+    "LLCA":   "LCA",
+    "AVS":    "LAVS",
+    "LAVS":   "LAVS",
+    "AI":     "LAI",
+    "LAI":    "LAI",
+}
+
+# Pattern articolo: optional "art."/"art " + numero (+ cpv/abs opzionale) + codice noto
+_CODES_RE = "|".join(sorted(LAW_CODE_ALIASES.keys(), key=len, reverse=True))
+ARTICLE_RE = re.compile(
+    r"(?:art\.?\s+)?(\d+(?:\s*(?:cpv|abs|al|lit|lett)\.?\s*\d*)*)\s+(" + _CODES_RE + r")\b",
+    re.IGNORECASE,
+)
+
+
+def normalizza_articoli(query: str) -> str:
+    """
+    Normalizza qualsiasi forma di riferimento ad un articolo di legge
+    alla forma canonica "art. {num} {CODICE}" (formato atteso dal portale sentenze.ti.ch).
+
+    Esempi:
+      "50 or"        → "art. 50 CO"
+      "50 OR"        → "art. 50 CO"
+      "art 50 OR"    → "art. 50 CO"
+      "art. 50 OR"   → "art. 50 CO"
+      "50 co"        → "art. 50 CO"
+      "50 CP"        → "art. 50 CP"
+      "41 ZGB"       → "art. 41 CC"
+    """
+    def _replace(m: re.Match) -> str:
+        num      = m.group(1).strip()
+        raw_code = m.group(2).upper()
+        canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
+        return f"art. {num} {canonical}"
+
+    return ARTICLE_RE.sub(_replace, query)
+
 # HTTP headers
 HTTP_HEADERS = {
     "User-Agent": (
@@ -130,7 +202,10 @@ TIPI DI RICERCA:
 - "articoli": ricerca per articolo di legge – usa SOLO se la query contiene "art." + numero + abbreviazione legge
 - "indice": ricerca per parole chiave dell'indice – usa per termini giuridici standard
 
-FORMATO ARTICOLI: art. 41 co (CO = codice delle obbligazioni, CP = codice penale, CC = codice civile, ecc.)
+FORMATO ARTICOLI: Art. 41 CO  (la forma è già normalizzata prima di arrivare a te — rispettala sempre)
+Abbreviazioni principali: CO (Codice Obbligazioni / tedesco: OR), CP (Codice Penale / StGB),
+CC (Codice Civile / ZGB), CPC (Procedura Civile / ZPO), CPP (Procedura Penale / StPO),
+LTF (Tribunale Federale / BGG), LEF, LIFD, LIVA, LAMal, LAINF, LDIP, LCA, LCD.
 
 ABBREVIAZIONI TRIBUNALI:
 ICCA, IICCA, CCC, CEF, TRAM, TPT, TCA, CDT, TE, PENAL, CCRP, CRP, GIAR, PRPEN
@@ -518,12 +593,30 @@ async def ricerca_cantonale(
     log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
              query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
 
-    # Step 1 – Trasformazione query con Claude
-    trasf = trasforma_query_con_claude(query)
-    query_opt = trasf.get("query_ottimizzata", query)
-    tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
-    tribunale = tribunale_override if tribunale_override else trasf.get("tribunale", "")
-    spiegazione = trasf.get("spiegazione", "")
+    # Pre-normalizzazione deterministica degli articoli (PRIMA dell'AI)
+    query_norm = normalizza_articoli(query)
+    was_normalized = query_norm != query
+    if was_normalized:
+        log.info("Articolo normalizzato: '%s' → '%s'", query, query_norm)
+
+    # Se la query contiene un articolo normalizzato OPPURE il filtro articoli è attivo:
+    # bypassa completamente l'AI e usa la query normalizzata direttamente.
+    # Questo evita che l'AI corrompa il riferimento (es. "art. 50 CO" → "50").
+    is_article_search = was_normalized or (tipo_override == "articoli")
+
+    if is_article_search:
+        query_opt  = query_norm
+        tipo       = "articoli"
+        tribunale  = tribunale_override or ""
+        spiegazione = f"Ricerca per articolo di legge: {query_norm}"
+        log.info("Articolo rilevato → bypass AI | query='%s' tipo='articoli'", query_opt)
+    else:
+        # Step 1 – Trasformazione query con Claude (solo per query generiche)
+        trasf = trasforma_query_con_claude(query_norm)
+        query_opt  = trasf.get("query_ottimizzata", query_norm)
+        tipo       = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
+        tribunale  = tribunale_override if tribunale_override else trasf.get("tribunale", "")
+        spiegazione = trasf.get("spiegazione", "")
 
     log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
 
