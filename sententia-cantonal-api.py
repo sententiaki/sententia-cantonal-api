@@ -150,21 +150,22 @@ ARTICLE_RE = re.compile(
 def normalizza_articoli(query: str) -> str:
     """
     Normalizza qualsiasi forma di riferimento ad un articolo di legge
-    alla forma canonica "Art. {num} {CODICE}".
+    alla forma canonica "art. {num} {CODICE}" (formato atteso dal portale sentenze.ti.ch).
 
     Esempi:
-      "50 or"        → "Art. 50 CO"
-      "50 OR"        → "Art. 50 CO"
-      "art 50 OR"    → "Art. 50 CO"
-      "art. 50 OR"   → "Art. 50 CO"
-      "50 co"        → "Art. 50 CO"
-      "41 or cpv 2"  → "Art. 41 OR cpv 2 CO"  (gestito parzialmente)
+      "50 or"        → "art. 50 CO"
+      "50 OR"        → "art. 50 CO"
+      "art 50 OR"    → "art. 50 CO"
+      "art. 50 OR"   → "art. 50 CO"
+      "50 co"        → "art. 50 CO"
+      "50 CP"        → "art. 50 CP"
+      "41 ZGB"       → "art. 41 CC"
     """
     def _replace(m: re.Match) -> str:
         num      = m.group(1).strip()
         raw_code = m.group(2).upper()
         canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
-        return f"Art. {num} {canonical}"
+        return f"art. {num} {canonical}"
 
     return ARTICLE_RE.sub(_replace, query)
 
