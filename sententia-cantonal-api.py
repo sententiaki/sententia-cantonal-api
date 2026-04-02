@@ -595,22 +595,28 @@ async def ricerca_cantonale(
 
     # Pre-normalizzazione deterministica degli articoli (PRIMA dell'AI)
     query_norm = normalizza_articoli(query)
-    if query_norm != query:
+    was_normalized = query_norm != query
+    if was_normalized:
         log.info("Articolo normalizzato: '%s' → '%s'", query, query_norm)
 
-    # Se la query (normalizzata) è puramente un riferimento ad articolo, salta l'AI
-    # e usa direttamente tipo="articoli"
-    is_pure_article = bool(ARTICLE_RE.fullmatch(query_norm.strip()))
-    if is_pure_article and not tipo_override:
-        tipo_override = "articoli"
-        log.info("Rilevato articolo puro → tipo forzato ad 'articoli'")
+    # Se la query contiene un articolo normalizzato OPPURE il filtro articoli è attivo:
+    # bypassa completamente l'AI e usa la query normalizzata direttamente.
+    # Questo evita che l'AI corrompa il riferimento (es. "art. 50 CO" → "50").
+    is_article_search = was_normalized or (tipo_override == "articoli")
 
-    # Step 1 – Trasformazione query con Claude (sulla query normalizzata)
-    trasf = trasforma_query_con_claude(query_norm)
-    query_opt = trasf.get("query_ottimizzata", query_norm)
-    tipo = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
-    tribunale = tribunale_override if tribunale_override else trasf.get("tribunale", "")
-    spiegazione = trasf.get("spiegazione", "")
+    if is_article_search:
+        query_opt  = query_norm
+        tipo       = "articoli"
+        tribunale  = tribunale_override or ""
+        spiegazione = f"Ricerca per articolo di legge: {query_norm}"
+        log.info("Articolo rilevato → bypass AI | query='%s' tipo='articoli'", query_opt)
+    else:
+        # Step 1 – Trasformazione query con Claude (solo per query generiche)
+        trasf = trasforma_query_con_claude(query_norm)
+        query_opt  = trasf.get("query_ottimizzata", query_norm)
+        tipo       = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
+        tribunale  = tribunale_override if tribunale_override else trasf.get("tribunale", "")
+        spiegazione = trasf.get("spiegazione", "")
 
     log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
 
