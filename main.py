@@ -380,13 +380,6 @@ async def cerca_stream(
 
     async def generator() -> AsyncIterator[str]:
         try:
-            # Sentenze cantonali: OCL non le ha ancora — avvisa subito
-            if tipo_filter == "cantonal":
-                yield sse({"type": "error",
-                           "message": "Le sentenze cantonali non sono ancora disponibili "
-                                      "tramite OpenCaseLaw. Prova senza il filtro Cantonale."})
-                return
-
             async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
 
                 # 1. Ottimizza query
@@ -398,9 +391,9 @@ async def cerca_stream(
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
                 # 2. Cerca su OpenCaseLaw — se c'è filtro area, prendiamo più risultati
-                #    così dopo il filtro ne restano abbastanza
-                fetch_limit = limit * 5 if area_filter else limit * 2
-                hits = await _ocl_search(query_opt, min(fetch_limit, 50), http)
+                #    così dopo il filtro ne restano abbastanza (3x è sufficiente per la maggior parte dei casi)
+                fetch_limit = limit * 3 if area_filter else limit * 2
+                hits = await _ocl_search(query_opt, min(fetch_limit, 30), http)
 
                 # Filtro anno
                 if anno_da or anno_a:
