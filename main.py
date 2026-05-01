@@ -1,41 +1,43 @@
 """
-Sententia – Cantonal API
-Backend dedicato alla ricerca delle sentenze cantonali ticinesi su www.sentenze.ti.ch
+Sententia — Search API  (porta 8002 locale · Render in produzione)
+Supporta tutti gli endpoint richiesti da sententia-prototype.html
+e sententia-summarize-prototype.html.
 
-Funzionamento:
-  1. Riceve la query naturale dell'utente
-  2. La trasforma con OpenAI nella forma ottimale per il motore di sentenze.ti.ch
-  3. Interroga il portale ufficiale
-  4. Estrae e restituisce i risultati strutturati
+Endpoints
+─────────
+  GET /cerca              Ricerca federale via OpenCaseLaw (risposta JSON)
+  GET /cerca_stream       Stessa ricerca via SSE: risultati arrivano in fila man mano che sono pronti
+  GET /sintesi            Riassunto AI di una sentenza (alias /sintesi_federal)
+  GET /sintesi_federal    Idem
+  GET /articolo_fedlex    Testo articolo di legge federale (proxy fedlex-connector.ch)
+  GET /html_federale      HTML pulito di una sentenza da bger.li
+  GET /health             Health check
 
-Avvio:
+Avvio locale:
   pip install fastapi uvicorn httpx beautifulsoup4 openai
-  OPENAI_API_KEY=sk-... uvicorn sententia-cantonal-api:app --port 8001 --reload
+  OPENAI_API_KEY=sk-...  uvicorn sententia-search-api:app --port 8002 --reload
 """
 
-import re
+import asyncio
 import json
-import os
 import logging
-from typing import Optional
+import os
+import re
+from typing import AsyncIterator, Optional
 
 import httpx
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from openai import OpenAI
+from fastapi.responses import JSONResponse, StreamingResponse
+from openai import AsyncOpenAI
 
-# ─── Logging ────────────────────────────────────────────────────────────────
+# ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
-# ─── App ────────────────────────────────────────────────────────────────────
-app = FastAPI(
-    title="Sententia – Cantonal API",
-    description="Ricerca sentenze cantonali ticinesi tramite www.sentenze.ti.ch",
-    version="1.0.0",
-)
+# ── App ──────────────────────────────────────────────────────────────────────
+app = FastAPI(title="Sententia Search API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -43,735 +45,553 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── Constants ───────────────────────────────────────────────────────────────
-PORTAL_BASE   = "https://www.sentenze.ti.ch"
-PORTAL_SEARCH = "https://www.sentenze.ti.ch/findinfo/ti/cerca.htm"
-PORTAL_CGI    = "https://www.sentenze.ti.ch/cgi-bin/nph-omniscgi"
+# ── Constants ─────────────────────────────────────────────────────────────────
+OPENCASELAW_BASE = "https://mcp.opencaselaw.ch/api"
 
-# Omnis Studio hidden fields required by the CGI (from form inspection)
-OMNIS_HIDDEN = {
-    "OmnisPlatform":   "WINDOWS",
-    "WebServerUrl":    "www.sentenze.ti.ch",
-    "WebServerScript": "/cgi-bin/nph-omniscgi",
-    "OmnisLibrary":    "JURISWEB",
-    "OmnisClass":      "rtFindinfoWebHtmlService",
-    "OmnisServer":     "JURISWEB,193.246.182.54:6000",
-    "Parametername":   "WWWTI",
-    "Schema":          "TI_WEB",
-    "Source":          "",
-}
-
-# Tribunali cantonali ticinesi (D.1 del manuale)
-COURT_NAMES: dict[str, str] = {
-    # Civile
-    "ICCA":   "Prima camera civile di appello",
-    "IICCA":  "Seconda camera civile di appello",
-    "IIICCA": "Terza camera civile di appello",
-    "CCR":    "Camera civile dei reclami",
-    "CCC":    "Camera di cassazione civile",
-    "CEF":    "Camera esecuzione e fallimenti",
-    "CDP":    "Camera di protezione",
-    # Amministrativo
-    "TRAM":   "Tribunale cantonale amministrativo",
-    "TPT":    "Tribunale della pianificazione del territorio",
-    "TCA":    "Tribunale cantonale delle assicurazioni sociali",
-    "CDT":    "Camera di diritto tributario",
-    "TE":     "Tribunale d'espropriazione",
-    # Penale
-    "PENAL":  "Tribunale penale cantonale",
-    "CARP":   "Corte d'appello e di revisione penale",
-    "CCRP":   "Corte di cassazione e di revisione penale",
-    "CRPTI":  "Corte dei reclami penali",
-    "CRP":    "Camera dei ricorsi penali",
-    "GPC":    "Giudice dei provvedimenti coercitivi",
-    "GIAR":   "Giudice dell'istruzione e dell'arresto",
-    "PRPEN":  "Pretura penale",
-}
-COURT_PATTERN = re.compile(
-    r"\b(ICCA|IICCA|IIICCA|CCR|CCC|CEF|CDP|TRAM|TPT|TCA|CDT|TE|PENAL|CARP|CCRP|CRPTI|CRP|GPC|GIAR|PRPEN)\b"
-)
-
-# Formato date dd.mm.yyyy
-DATE_PATTERN = re.compile(r"\d{2}\.\d{2}\.\d{4}")
-
-# Numero di incarto (es. 12.2021.234)
-INCARTO_PATTERN = re.compile(r"\d+\.\d{4}\.\d+")
-
-# ─── Normalizzazione articoli di legge ───────────────────────────────────────
-
-# Mappa abbreviazioni → forma canonica italiana (case-insensitive lookup via .upper())
-LAW_CODE_ALIASES: dict[str, str] = {
-    # Tedesco → Italiano
-    "OR":     "CO",     # Obligationenrecht → Codice delle Obbligazioni
-    "ZGB":    "CC",     # Zivilgesetzbuch → Codice Civile
-    "STGB":   "CP",     # Strafgesetzbuch → Codice Penale
-    "ZPO":    "CPC",    # Zivilprozessordnung → Codice di Procedura Civile
-    "STPO":   "CPP",    # Strafprozessordnung → Codice di Procedura Penale
-    "VWVG":   "PA",     # Verwaltungsverfahrensgesetz → Legge procedura amm.va
-    "BGG":    "LTF",    # Bundesgerichtsgesetz → Legge Tribunale Federale
-    "MSCHG":  "LPM",    # Markenschutzgesetz → Legge Protezione Marchi
-    # Francese → Italiano (dove diverso)
-    "CCS":    "CC",     # Code Civil Suisse
-    # Già canonici (normalizza solo maiuscole)
-    "CO":     "CO",
-    "CP":     "CP",
-    "CC":     "CC",
-    "CPC":    "CPC",
-    "CPP":    "CPP",
-    "LTF":    "LTF",
-    "PA":     "PA",
-    "LAINF":  "LAINF",
-    "LAA":    "LAINF",  # alias tedesco
-    "LAMAL":  "LAMal",
-    "LCA":    "LCA",
-    "LDIP":   "LDIP",
-    "LEF":    "LEF",
-    "LIFD":   "LIFD",
-    "LIVA":   "LIVA",
-    "LCD":    "LCD",
-    "LCART":  "LCart",
-    "LFUS":   "LFus",
-    "LPM":    "LPM",
-    "LLCA":   "LCA",
-    "AVS":    "LAVS",
-    "LAVS":   "LAVS",
-    "AI":     "LAI",
-    "LAI":    "LAI",
-}
-
-# Pattern articolo: optional "art."/"art " + numero (+ cpv/abs opzionale) + codice noto
-_CODES_RE = "|".join(sorted(LAW_CODE_ALIASES.keys(), key=len, reverse=True))
-ARTICLE_RE = re.compile(
-    r"(?:art\.?\s+)?(\d+(?:\s*(?:cpv|abs|al|lit|lett)\.?\s*\d*)*)\s+(" + _CODES_RE + r")\b",
-    re.IGNORECASE,
-)
-
-
-def normalizza_articoli(query: str) -> str:
-    """
-    Normalizza qualsiasi forma di riferimento ad un articolo di legge
-    alla forma canonica "art. {num} {CODICE}".
-
-    Esempi:
-      "50 or"        → "art. 50 CO"
-      "50 OR"        → "art. 50 CO"
-      "art 50 OR"    → "art. 50 CO"
-      "art. 50 OR"   → "art. 50 CO"
-      "50 co"        → "art. 50 CO"
-      "41 ZGB"       → "art. 41 CC"
-    """
-    def _replace(m: re.Match) -> str:
-        num      = m.group(1).strip()
-        raw_code = m.group(2).upper()
-        canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
-        return f"art. {num} {canonical}"
-
-    return ARTICLE_RE.sub(_replace, query)
-
-
-def costruisci_query_con_articolo(query: str) -> tuple[str, str] | None:
-    """
-    Se la query contiene un articolo di legge (puro o misto a testo libero),
-    costruisce una query booleana ottimizzata senza passare dall'AI.
-
-    Esempi:
-      "41 co"                  → 'art. 41 CO'
-      "danno illecito 41 co"   → '"danno illecito" AND "art. 41 CO"'
-      "licenziamento 337 CO"   → '"licenziamento" AND "art. 337 CO"'
-
-    Ritorna (query_ottimizzata, spiegazione) oppure None se nessun articolo trovato.
-    """
-    matches = list(ARTICLE_RE.finditer(query))
-    if not matches:
-        return None
-
-    # Parti di testo libero (togliendo i riferimenti agli articoli)
-    text_only = ARTICLE_RE.sub("", query)
-    text_only = re.sub(r'\s+', ' ', text_only).strip()
-    # Rimuovi operatori booleani rimasti orfani
-    text_only = re.sub(r'\b(AND|OR|NOT)\b', '', text_only, flags=re.IGNORECASE).strip()
-
-    # Articoli normalizzati
-    art_parts = []
-    for m in matches:
-        num      = m.group(1).strip()
-        raw_code = m.group(2).upper()
-        canonical = LAW_CODE_ALIASES.get(raw_code, raw_code)
-        art_parts.append(f'"art. {num} {canonical}"')
-
-    if text_only:
-        # Query mista: testo AND articolo
-        query_opt   = f'"{text_only}" AND {" AND ".join(art_parts)}'
-        spiegazione = f'Ricerca per testo e articolo di legge: {text_only} + {", ".join(art_parts)}'
-    else:
-        # Solo articolo: niente virgolette (il portale cerca la stringa esatta)
-        query_opt   = " AND ".join(p.strip('"') for p in art_parts)
-        spiegazione = f'Ricerca per articolo di legge: {query_opt}'
-
-    return query_opt, spiegazione
-
-# HTTP headers
 HTTP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "it-CH,it;q=0.9,en;q=0.5",
+    "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
 }
 
-# ─── Claude: trasformazione della query ─────────────────────────────────────
+# Prefisso numero di dossier → area giuridica
+AREA_MAP: dict[str, str] = {
+    "6": "penale", "7": "penale",
+    "4": "civile", "5": "civile",
+    "8": "sociale", "9": "sociale",
+    "1": "pubblico", "2": "pubblico", "3": "pubblico",
+}
 
-SYSTEM_PROMPT = """Sei un esperto di ricerca giuridica del Canton Ticino.
-Il tuo compito è trasformare la query naturale dell'utente nella forma ottimale
-per il motore di ricerca del portale www.sentenze.ti.ch.
+# Nome tribunale grezzo → etichetta display
+COURT_DISPLAY: dict[str, str] = {
+    "bundesgericht":           "BGer — Tribunale federale",
+    "tribunal fédéral":        "BGer — Tribunale federale",
+    "tribunale federale":      "BGer — Tribunale federale",
+    "bger":                    "BGer — Tribunale federale",
+    "bge":                     "BGer — Tribunale federale",
+    "bundesverwaltungsgericht":"BVGer — Trib. amm. federale",
+    "tribunal administratif fédéral": "BVGer — Trib. amm. federale",
+    "bvger":                   "BVGer — Trib. amm. federale",
+    "bundesstrafgericht":      "BStGer — Trib. penale federale",
+    "tribunal pénal fédéral":  "BStGer — Trib. penale federale",
+    "bstger":                  "BStGer — Trib. penale federale",
+}
 
-Regole del motore di ricerca (dal manuale ufficiale del portale):
+# Abbreviazioni legge per la normalizzazione
+LAW_ALIASES: dict[str, str] = {
+    "OR": "CO", "ZGB": "CC", "STGB": "CP", "ZPO": "CPC", "STPO": "CPP",
+    "BGG": "LTF", "KVG": "LAMal", "LAA": "LAINF", "AHVG": "LAVS",
+    "IVG": "LAI", "SCHKG": "LEF", "DBG": "LIFD", "MWSTG": "LIVA",
+    "UWG": "LCD", "KG": "LCart", "MSCHG": "LPM", "FUSG": "LFus",
+    "IPRG": "LDIP", "VWVG": "PA",
+}
 
-OPERATORI SUPPORTATI:
-- Virgolette per frasi esatte: "stato di ebrietà"
-- AND: ricerca più gruppi di parole: "stato di ebrietà" AND "incidente mortale"
-- OR: alternativa tra gruppi: "stato di ebrietà" OR "stato di ubriachezza"
-- NOT: esclude parole: "stato di ebrietà" NOT "autoveicolo"
-
-IMPORTANTE: usa SEMPRE AND per combinare i termini. Non usare mai NEAR.
-
-TIPI DI RICERCA:
-- "testo": ricerca nel testo completo (catalogate e non catalogate) – usa per concetti giuridici, fatti
-- "titolo": ricerca nel titolo (solo catalogate) – usa per parole chiave semplici e precise
-- "articoli": ricerca per articolo di legge – usa SOLO se la query contiene "art." + numero + abbreviazione legge
-- "indice": ricerca per parole chiave dell'indice – usa per termini giuridici standard
-
-FORMATO ARTICOLI: Art. 41 CO  (la forma è già normalizzata prima di arrivare a te — rispettala sempre)
-Abbreviazioni principali: CO (Codice Obbligazioni / tedesco: OR), CP (Codice Penale / StGB),
-CC (Codice Civile / ZGB), CPC (Procedura Civile / ZPO), CPP (Procedura Penale / StPO),
-LTF (Tribunale Federale / BGG), LEF, LIFD, LIVA, LAMal, LAINF, LDIP, LCA, LCD.
-
-ABBREVIAZIONI TRIBUNALI:
-ICCA, IICCA, CCC, CEF, TRAM, TPT, TCA, CDT, TE, PENAL, CCRP, CRP, GIAR, PRPEN
-
-Rispondi SOLO con JSON valido, senza altri testi."""
-
-USER_PROMPT_TEMPLATE = """Query utente: "{query}"
-
-Rispondi con questo oggetto JSON:
-{{
-  "query_ottimizzata": "la query trasformata con operatori appropriati",
-  "tipo_ricerca": "testo" | "titolo" | "articoli" | "indice",
-  "tribunale": "abbreviazione o stringa vuota se non specificato",
-  "spiegazione": "una frase che spiega la trasformazione (es. 'Ricerca nel testo con operatore NEAR per termini vicini')"
-}}"""
+# Regex per l'estrazione degli articoli dal testo
+_CODES = (
+    "CP|StGB|CO|OR|CPP|StPO|LTF|BGG|BV|Cost\\.|Cst\\.|ZPO|CPC"
+    "|LPD|DSG|CC|ZGB|LAMal|KVG|LAINF|LAA|LAVS|AHVG|LAI|IVG"
+    "|LEF|SchKG|LIFD|DBG|LIVA|MWSTG|LCD|UWG|LCart|KG|LPM|MSchG"
+    "|LFus|FusG|LDIP|IPRG|PA|VwVG|LTF"
+)
+ARTICLE_RE = re.compile(
+    r'[Aa]rt\.?\s+(\d+[a-z]?)(?:\s+(?:cpv|abs|al|lett?|lit)\.?\s*\d+)?'
+    r'\s+(' + _CODES + r')\b',
+    re.UNICODE,
+)
 
 
-def trasforma_query_con_claude(query_utente: str) -> dict:
-    """
-    Chiama Claude per trasformare la query naturale nella forma ottimale
-    per il motore di sentenze.ti.ch.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        log.warning("OPENAI_API_KEY non impostata – uso query diretta")
-        return {
-            "query_ottimizzata": query_utente,
-            "tipo_ricerca": "testo",
-            "tribunale": "",
-            "spiegazione": "Query inviata direttamente (API key assente)",
-        }
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-    client = OpenAI(api_key=api_key)
+def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
+    seen, result = set(), []
+    for num, code in ARTICLE_RE.findall(testo):
+        code_norm = LAW_ALIASES.get(code.upper().rstrip('.'), code)
+        label = f"Art. {num} {code_norm}"
+        if label not in seen:
+            seen.add(label)
+            result.append(label)
+        if len(result) >= max_art:
+            break
+    return result
+
+def rileva_area(docket: str) -> str:
+    return AREA_MAP.get(docket.strip()[:1], "pubblico")
+
+def normalizza_tribunale(raw: str) -> str:
+    key = raw.lower().strip()
+    for k, v in COURT_DISPLAY.items():
+        if k in key:
+            return v
+    return raw.strip() or "BGer — Tribunale federale"
+
+def formatta_data(raw: str) -> str:
+    m = re.match(r'(\d{4})-(\d{2})-(\d{2})', raw or "")
+    return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else (raw or "")
+
+def costruisci_url_bger(codice: str) -> str:
+    c = codice.strip()
+    c = re.sub(r'^BGE\s+', '', c, flags=re.IGNORECASE)
+    c = re.sub(r'[\s/]', '-', c)
+    return f"https://bger.li/{c}"
+
+def sse(data: dict) -> str:
+    """Formatta un evento SSE."""
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+# ── Query optimizer (GPT-4o-mini) ─────────────────────────────────────────────
+
+_OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
+Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
+di sentenze federali svizzere (OpenCaseLaw).
+
+Regole:
+- Estrai 1–4 concetti giuridici chiave in forma di parole chiave (non frasi complete)
+- Mantieni i riferimenti agli articoli esattamente come scritti (es. "art. 53 CP", "art. 336 CO")
+- Se la query è già un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscilo com'è
+- Usa la lingua della query (it/de/fr) o termini giuridici standard
+
+Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
+
+async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
     try:
-        message = client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=400,
+        resp = await ai.chat.completions.create(
+            model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": USER_PROMPT_TEMPLATE.format(query=query_utente)},
+                {"role": "system", "content": _OPTIMIZER_SYSTEM},
+                {"role": "user",   "content": f'Query: "{query}"'},
             ],
         )
-        raw = message.choices[0].message.content.strip()
-        log.info("OpenAI response: %s", raw)
-
-        # Estrai JSON
-        json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        if json_match:
-            return json.loads(json_match.group())
-
-        # Fallback
-        return {
-            "query_ottimizzata": query_utente,
-            "tipo_ricerca": "testo",
-            "tribunale": "",
-            "spiegazione": "Trasformazione non riuscita – query diretta",
-        }
+        raw = resp.choices[0].message.content.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            d = json.loads(m.group())
+            return d.get("query_ottimizzata", query), d.get("spiegazione", "")
     except Exception as exc:
-        log.error("Errore OpenAI: %s", exc)
-        return {
-            "query_ottimizzata": query_utente,
-            "tipo_ricerca": "testo",
-            "tribunale": "",
-            "spiegazione": f"Errore OpenAI: {exc}",
-        }
+        log.warning("Optimizer error: %s", exc)
+    return query, "Query diretta"
 
 
-# ─── Ricerca sul portale ─────────────────────────────────────────────────────
+# ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
 
-# Mappa tipo ricerca → valore del parametro cSuchstringZiel
-TIPO_ZIEL_MAP: dict[str, str] = {
-    "testo":    "testo",
-    "titolo":   "titolo",
-    "articoli": "articoli",
-    "indice":   "indice",
+_SUMMARY_SYSTEM = {
+    "it": (
+        "Sei un esperto legale svizzero. Scrivi un riassunto di questa sentenza federale "
+        "in italiano (120–160 parole). Descrivi il problema giuridico centrale, l'analisi "
+        "del tribunale e l'esito. Cita gli articoli applicati. Testo fluente, nessun titolo."
+    ),
+    "de": (
+        "Du bist ein Schweizer Rechtsexperte. Schreibe eine Zusammenfassung dieses "
+        "Bundesgerichtsurteils auf Deutsch (120–160 Wörter). Beschreibe die Rechtsfrage, "
+        "die Analyse und das Ergebnis. Zitiere die angewandten Artikel. Fließender Text."
+    ),
+    "fr": (
+        "Tu es un expert juridique suisse. Rédige un résumé de cet arrêt fédéral en "
+        "français (120–160 mots). Décris la question juridique, l'analyse et l'issue. "
+        "Cite les articles appliqués. Texte fluide, sans titres."
+    ),
 }
 
-
-# Mappa area → TUTTI i checkbox da spuntare (gruppo + individuali).
-# Verificato sul portale reale: il click sul gruppo attiva JS che spunta anche gli individuali.
-# Per il POST CGI bisogna inviare entrambi.
-AREA_CHECKBOXES: dict[str, list[str]] = {
-    "privato": [
-        "bInfoArt_Privatrecht1",
-        "bInfoArt_ICCA1", "bInfoArt_IICCA1", "bInfoArt_IIICC1",
-        "bInfoArt_CCR1", "bInfoArt_CCC1", "bInfoArt_CEF1", "bInfoArt_CDP1",
-    ],
-    "pubblico": [
-        "bInfoArt_OeffentlichesRecht1",
-        "bInfoArt_TRAM1", "bInfoArt_TPT1", "bInfoArt_TCA1",
-        "bInfoArt_CDT1", "bInfoArt_TE1",
-    ],
-    "penale": [
-        "bInfoArt_Strafrecht1",
-        "bInfoArt_PENAL1", "bInfoArt_CARP1", "bInfoArt_CCRP1", "bInfoArt_CRPTI1",
-        "bInfoArt_CRP1", "bInfoArt_GPC1", "bInfoArt_GIAR1", "bInfoArt_PRPEN1",
-    ],
-}
-# Set di tutti i checkbox bInfoArt_* conosciuti
-ALL_KNOWN_CHECKBOXES: set[str] = {cb for cbs in AREA_CHECKBOXES.values() for cb in cbs}
-
-
-async def cerca_sul_portale(
-    query: str,
-    tipo: str,
-    tribunale: str = "",
-    anno_da: Optional[str] = None,
-    anno_a: Optional[str] = None,
-    portata: Optional[str] = None,
-    area: Optional[str] = None,
-) -> list[dict]:
-    """
-    Interroga www.sentenze.ti.ch (Omnis Studio CGI) e ritorna una lista di risultati.
-
-    Step 1: scarica la pagina di ricerca per ottenere i campi hidden e le checkbox
-            dei tribunali così come appaiono nel form reale.
-    Step 2: POST al CGI con tutti i parametri corretti.
-    """
-    async with httpx.AsyncClient(
-        timeout=30.0,
-        follow_redirects=True,
-        headers=HTTP_HEADERS,
-    ) as client:
-
-        # ── Step 1: scarica il form di ricerca ───────────────────────────────
-        params: dict[str, str] = dict(OMNIS_HIDDEN)
-        form_action = PORTAL_CGI
-        try:
-            form_resp = await client.get(PORTAL_SEARCH)
-            soup_form = BeautifulSoup(form_resp.text, "html.parser")
-            form = soup_form.find("form")
-            if form:
-                action = form.get("action", "")
-                if action:
-                    form_action = action if action.startswith("http") else PORTAL_BASE + action
-
-                # Tutti i campi hidden del form
-                for hidden in form.find_all("input", type="hidden"):
-                    name = hidden.get("name", "")
-                    val  = hidden.get("value", "")
-                    if name:
-                        params[name] = val
-
-                # Mappa portata frontend (P/C/N) → valore portale (NUOVO/CONFERMA/SENZA)
-                PORTATA_MAP = {"P": "NUOVO", "C": "CONFERMA", "N": "SENZA"}
-                portata_filter: set[str] = set()
-                if portata:
-                    portata_filter = {PORTATA_MAP.get(p.strip(), p.strip()) for p in portata.split(",")}
-
-                # Checkbox: tribunali (bInfoArt_*) e portata (F30_ENTSCHEID_TYP_*)
-                # Calcola il set di checkbox bInfoArt_* da includere nel POST:
-                #   tribunale specifico → solo il suo checkbox individuale
-                #   area(e) selezionate → gruppo + tutti gli individuali dell'area
-                #   nessun filtro       → tutti i checkbox conosciuti
-                if tribunale:
-                    allowed_cbs: set[str] = {f"bInfoArt_{tribunale}1"}
-                elif area:
-                    areas_set = set(area.split(","))
-                    allowed_cbs = {cb for a in areas_set for cb in AREA_CHECKBOXES.get(a, [])}
-                else:
-                    allowed_cbs = ALL_KNOWN_CHECKBOXES
-
-                for cb in form.find_all("input", {"type": "checkbox"}):
-                    name = cb.get("name", "")
-                    val  = cb.get("value", "")
-                    if not name or not val:
-                        continue
-                    if name.startswith("bInfoArt_"):
-                        if name in allowed_cbs:
-                            params[name] = val
-                    elif val in ("NUOVO", "CONFERMA", "SENZA"):
-                        # Checkbox portata
-                        if not portata_filter or val in portata_filter:
-                            params[name] = val
-                    else:
-                        # Altri checkbox: includi sempre
-                        params[name] = val
-
-            log.info("Form action: %s | court=%s | area=%s | cbs=%d | portata=%s",
-                     form_action, tribunale or "—", area or "tutti", len(allowed_cbs), portata or "tutte")
-        except Exception as exc:
-            log.warning("Impossibile caricare il form (%s) – uso parametri di fallback", exc)
-            if tribunale:
-                params[f"bInfoArt_{tribunale}1"] = tribunale
-            else:
-                areas_fb = set(area.split(",")) if area else set(AREA_CHECKBOXES.keys())
-                for a in areas_fb:
-                    for cb_name in AREA_CHECKBOXES.get(a, []):
-                        # Nel fallback non conosciamo il valore esatto, usiamo il codice corte
-                        params[cb_name] = cb_name.replace("bInfoArt_", "").rstrip("1")
-
-        # ── Parametri di ricerca ─────────────────────────────────────────────
-        params["Aufruf"]                = "validate"
-        params["Template"]              = "results/resultpage_ita.fiw"
-        params["cSprache"]              = "ITA"
-        params["cSuchstring"]           = query
-        params["cSuchstringZiel"]       = TIPO_ZIEL_MAP.get(tipo, "testo")
-        params["nSeite"]                = "1"
-        params["nAnzahlTrefferProSeite"] = "10"
-        params["cButtonAction"]         = "3. Trova"
-
-        # ── Filtro temporale (anno) ───────────────────────────────────────────
-        if anno_da:
-            params["cEntscheiddatumVonJahr"]  = str(anno_da)
-            params["cEntscheiddatumVonMonat"] = ""
-        if anno_a:
-            params["cEntscheiddatumBisJahr"]  = str(anno_a)
-            params["cEntscheiddatumBisMonat"] = ""
-
-        log.info("POST %s | query='%s' tipo='%s' periodo=%s-%s",
-                 form_action, query, params["cSuchstringZiel"], anno_da or "*", anno_a or "*")
-
-        # ── Step 2: invia la ricerca ─────────────────────────────────────────
-        try:
-            response = await client.post(form_action, data=params)
-        except Exception as exc:
-            log.error("POST fallito: %s", exc)
-            return []
-
-        log.info("Risposta portale: status=%s len=%d", response.status_code, len(response.content))
-        # Decodifica esplicitamente come Windows-1252 (portale legacy italiano)
-        html_text = response.content.decode("cp1252", errors="replace")
-        return parse_results(html_text)
-
-
-def parse_results(html: str) -> list[dict]:
-    """
-    Estrae i risultati dalla pagina HTML di sentenze.ti.ch.
-
-    Struttura reale del portale: ogni risultato contiene un link
-    con href che include "getMarkupDocument" e title="Sentenza numero incarto {XX.YYYY.ZZ}".
-    Il testo del link è il sommario della sentenza.
-    Nell'elemento padre si trovano Autorità, date e numero incarto.
-    """
-    soup = BeautifulSoup(html, "html.parser")
-    results: list[dict] = []
-
-    # Tutti i link alle sentenze hanno "getMarkupDocument" nell'href
-    links = soup.find_all("a", href=lambda h: h and "getMarkupDocument" in h)
-
-    for link_el in links[:10]:
-        href = link_el["href"]
-        url  = href if href.startswith("http") else PORTAL_BASE + href
-
-        # Testo del link = sommario della sentenza
-        titolo = link_el.get_text(strip=True)
-        # Fix: CP1252 control chars (0x91-0x94) che l'html parser non converte
-        titolo = titolo.replace('\u0091','\u2018').replace('\u0092','\u2019').replace('\u0093','\u201c').replace('\u0094','\u201d')
-
-        # title attribute = "Sentenza numero incarto 52.2015.575"
-        title_attr = link_el.get("title", "")
-        incarto_m  = INCARTO_PATTERN.search(title_attr)
-        incarto    = incarto_m.group(0) if incarto_m else ""
-
-        # Testo dell'elemento padre (tabella del singolo risultato)
-        parent = link_el.find_parent("table")
-        block_text = parent.get_text(" ", strip=True) if parent else ""
-
-        dates    = DATE_PATTERN.findall(block_text)
-        court_m  = COURT_PATTERN.search(block_text)
-        court    = court_m.group(1) if court_m else ""
-
-        if not incarto:
-            im = INCARTO_PATTERN.search(block_text)
-            incarto = im.group(0) if im else ""
-
-        results.append({
-            "titolo":             titolo,
-            "tribunale":          court,
-            "nome_tribunale":     COURT_NAMES.get(court, ""),
-            "data_decisione":     dates[0] if len(dates) > 0 else "",
-            "data_pubblicazione": dates[1] if len(dates) > 1 else "",
-            "numero_incarto":     incarto,
-            "url_originale":      url,
-        })
-
-    log.info("Risultati estratti: %d", len(results))
-    return results
-
-
-# ─── Riassunto di una sentenza cantonale ────────────────────────────────────
-
-SUMMARY_SYSTEM = """Sei un esperto legale svizzero specializzato in diritto cantonale ticinese.
-Fornisci riassunti chiari, precisi e professionali delle sentenze."""
-
-SUMMARY_USER = """Riassumi questa sentenza cantonale ticinese in modo chiaro e strutturato.
-
-Usa questa struttura:
-**Fatti**: breve descrizione dei fatti rilevanti
-**Questione giuridica**: il problema legale centrale affrontato
-**Decisione**: il dispositivo e la motivazione principale
-**Articoli citati**: i principali articoli di legge applicati (se presenti nel testo)
-
-Testo della sentenza:
-{testo}"""
-
-
-@app.get("/riassumi_cantonale")
-async def riassumi_cantonale(
-    url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
-):
-    """
-    Scarica il testo di una sentenza cantonale ticinese e lo riassume con Claude.
-    """
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        return JSONResponse(
-            {"errore": "OPENAI_API_KEY non configurata sul server."},
-            status_code=500,
-        )
-
-    # ── Scarica la sentenza ──────────────────────────────────────────────────
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:
-            return JSONResponse(
-                {"errore": f"Impossibile scaricare la sentenza: {exc}"},
-                status_code=502,
-            )
-
-    soup = BeautifulSoup(resp.content.decode("cp1252", errors="replace"), "html.parser")
-
-    # Rimuovi navigazione e footer
-    for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
-        tag.decompose()
-
-    # Cerca il contenuto principale
-    content_el = (
-        soup.find("div", class_=re.compile(r"content|document|testo|sentenza|main|article", re.I))
-        or soup.find("article")
-        or soup.find("main")
-        or soup.find("body")
-    )
-    testo = content_el.get_text("\n", strip=True) if content_el else ""
-    testo = testo[:9000]  # Limite token sicuro
-
-    if len(testo) < 50:
-        return JSONResponse(
-            {"errore": "Impossibile estrarre il testo dalla sentenza. Verifica l'URL."},
-            status_code=400,
-        )
-
-    # ── Riassunto con OpenAI ──────────────────────────────────────────────────
+async def genera_riassunto(testo: str, lang: str, ai: AsyncOpenAI) -> str:
+    if not testo:
+        return ""
     try:
-        ai_client = OpenAI(api_key=api_key)
-        message = ai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=1200,
+        resp = await ai.chat.completions.create(
+            model="gpt-4o-mini", max_tokens=380, temperature=0.25,
             messages=[
-                {"role": "system", "content": SUMMARY_SYSTEM},
-                {"role": "user", "content": SUMMARY_USER.format(testo=testo)},
+                {"role": "system", "content": _SUMMARY_SYSTEM.get(lang, _SUMMARY_SYSTEM["it"])},
+                {"role": "user",   "content": testo[:6000]},
             ],
         )
-        riassunto = message.choices[0].message.content
+        return resp.choices[0].message.content.strip()
     except Exception as exc:
-        return JSONResponse({"errore": f"Errore OpenAI: {exc}"}, status_code=500)
+        log.error("Summary error: %s", exc)
+        return ""
 
-    return JSONResponse({"riassunto": riassunto, "url": url})
+
+# ── OpenCaseLaw helpers ───────────────────────────────────────────────────────
+
+async def _ocl_search(query: str, limit: int, http: httpx.AsyncClient) -> list[dict]:
+    try:
+        r = await http.get(
+            f"{OPENCASELAW_BASE}/decisions",
+            params={"query": query, "limit": limit},
+            timeout=15.0,
+        )
+        r.raise_for_status()
+        d = r.json()
+        return d.get("results", d if isinstance(d, list) else [])
+    except Exception as exc:
+        log.error("OCL search error: %s", exc)
+        return []
+
+async def _ocl_full_text(decision_id: str, http: httpx.AsyncClient) -> str:
+    if not decision_id:
+        return ""
+    try:
+        r = await http.get(
+            f"{OPENCASELAW_BASE}/decisions/{decision_id}",
+            params={"full_text": "true"},
+            timeout=20.0,
+        )
+        r.raise_for_status()
+        d = r.json()
+        return (d.get("full_text") or d.get("text") or "").strip()
+    except Exception as exc:
+        log.warning("OCL full text error (%s): %s", decision_id, exc)
+        return ""
+
+def _hit_to_meta(hit: dict, rank: int) -> dict:
+    """Estrae i metadati di un risultato OCL."""
+    docket    = hit.get("docket_number") or hit.get("file_number") or hit.get("id") or "—"
+    data_raw  = hit.get("decision_date") or hit.get("date") or ""
+    data_fmt  = formatta_data(data_raw)
+    anno_m    = re.search(r'\d{4}', data_raw)
+    anno      = int(anno_m.group()) if anno_m else 0
+    court_raw = hit.get("court_name") or hit.get("court") or "BGer"
+    return {
+        "rank":        rank,
+        "codice":      docket,
+        "tribunale":   normalizza_tribunale(court_raw),
+        "tipo":        "federal",
+        "area":        rileva_area(docket),
+        "data":        data_fmt,
+        "anno":        anno,
+        "url":         costruisci_url_bger(docket),
+        "decision_id": hit.get("decision_id", ""),
+    }
+
+async def _elabora_risultato(
+    hit: dict, rank: int, lang: str,
+    ai: Optional[AsyncOpenAI], http: httpx.AsyncClient,
+) -> dict:
+    """Scarica il testo completo e genera il riassunto per un singolo risultato."""
+    meta   = _hit_to_meta(hit, rank)
+    testo  = await _ocl_full_text(meta["decision_id"], http)
+    riass  = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
+    art    = estrai_articoli(testo or riass)
+    return {**meta, "riassunto": riass, "articoli": art}
 
 
-# ─── Endpoint principale: ricerca cantonale ──────────────────────────────────
+# ── /cerca  (JSON bloccante) ─────────────────────────────────────────────────
 
-@app.get("/ricerca_cantonale")
-async def ricerca_cantonale(
-    query: str = Query(..., min_length=2, description="Query in linguaggio naturale"),
-    tipo_override: Optional[str] = Query(None, description="Forza tipo ricerca: testo|titolo|articoli|indice"),
-    tribunale_override: Optional[str] = Query(None, description="Forza tribunale specifico (sigla)"),
-    area_override: Optional[str] = Query(None, description="Filtra per area: privato,pubblico,penale (comma-separated)"),
-    anno_da: Optional[str] = Query(None, description="Anno inizio periodo"),
-    anno_a: Optional[str] = Query(None, description="Anno fine periodo"),
-    portata: Optional[str] = Query(None, description="Portata giuridica: P,C,N (comma-separated)"),
+@app.get("/cerca")
+async def cerca(
+    query:   str           = Query(..., min_length=1),
+    lang:    str           = Query("it"),
+    limit:   int           = Query(8, ge=1, le=20),
+    anno_da: Optional[str] = Query(None),
+    anno_a:  Optional[str] = Query(None),
 ):
-    """
-    Ricerca sentenze cantonali ticinesi su www.sentenze.ti.ch.
+    """Ricerca federale via OpenCaseLaw. Restituisce tutti i risultati in una sola risposta JSON."""
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    lang    = lang if lang in ("it", "de", "fr") else "it"
+    ai      = AsyncOpenAI(api_key=api_key) if api_key else None
 
-    Pipeline:
-      1. Claude trasforma la query naturale → query ottimizzata per il portale
-         (tipo e tribunale vengono sovrascritti se passati come override)
-      2. Ricerca sul portale ufficiale
-      3. Parsing e strutturazione dei risultati
-      4. Restituzione JSON al frontend
-    """
-    log.info("Nuova ricerca cantonale: '%s' | overrides: tipo=%s tribunale=%s area=%s periodo=%s-%s portata=%s",
-             query, tipo_override, tribunale_override, area_override, anno_da, anno_a, portata)
+    async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
+        query_opt, spiegazione = await ottimizza_query(query, ai) if ai else (query, "")
+        log.info("cerca: '%s' → '%s' | lang=%s limit=%d", query, query_opt, lang, limit)
 
-    # Prova a costruire una query booleana deterministica se c'è un articolo
-    art_result = costruisci_query_con_articolo(query)
+        hits = await _ocl_search(query_opt, limit * 2, http)
 
-    if art_result:
-        # Query con articolo (pura o mista): bypass AI, sempre tipo=testo
-        query_opt, spiegazione = art_result
-        tipo      = "testo"
-        tribunale = tribunale_override or ""
-        log.info("Articolo rilevato → bypass AI | query='%s'", query_opt)
-    else:
-        # Query generica: usa AI
-        trasf = trasforma_query_con_claude(query)
-        query_opt  = trasf.get("query_ottimizzata", query)
-        # Forza sempre "testo": tipo "articoli" del portale sentenze.ti.ch non funziona
-        raw_tipo   = tipo_override if tipo_override else trasf.get("tipo_ricerca", "testo")
-        tipo       = "testo" if raw_tipo == "articoli" else raw_tipo
-        tribunale  = tribunale_override if tribunale_override else trasf.get("tribunale", "")
-        spiegazione = trasf.get("spiegazione", "")
+        # Filtro anno
+        if anno_da or anno_a:
+            def _ok(h: dict) -> bool:
+                m = re.search(r'\d{4}', h.get("decision_date", "") or "")
+                if not m:
+                    return True
+                y = int(m.group())
+                return (not anno_da or y >= int(anno_da)) and (not anno_a or y <= int(anno_a))
+            hits = [h for h in hits if _ok(h)]
 
-    log.info("Query ottimizzata: '%s' | tipo: %s | tribunale: %s | area: %s", query_opt, tipo, tribunale, area_override)
+        hits = hits[:limit]
+        if not hits:
+            return JSONResponse({
+                "risultati": [], "query_originale": query,
+                "query_ottimizzata": query_opt, "spiegazione": spiegazione,
+                "totale": 0, "errore": "Nessun risultato trovato.",
+            })
 
-    # Step 2 – Ricerca sul portale (con parametri extra opzionali)
-    risultati = await cerca_sul_portale(
-        query_opt, tipo, tribunale,
-        anno_da=anno_da, anno_a=anno_a, portata=portata,
-        area=area_override,
-    )
-
-    # Post-filtro per anno (sicurezza: il portale CGI potrebbe non rispettare i parametri data)
-    if anno_da or anno_a:
-        def _year(d: str) -> int:
-            try: return int(d.split(".")[-1])
-            except: return 0
-        risultati = [
-            r for r in risultati
-            if not r.get("data_decisione") or (
-                (not anno_da or _year(r["data_decisione"]) >= int(anno_da)) and
-                (not anno_a  or _year(r["data_decisione"]) <= int(anno_a))
-            )
+        # Elabora tutti in parallelo
+        tasks = [
+            asyncio.create_task(_elabora_risultato(h, i + 1, lang, ai, http))
+            for i, h in enumerate(hits)
         ]
+        risultati = await asyncio.gather(*tasks)
 
     return JSONResponse({
-        "risultati": risultati,
-        "query_originale": query,
+        "risultati": list(risultati),
+        "query_originale":  query,
         "query_ottimizzata": query_opt,
-        "tipo_ricerca": tipo,
-        "tribunale": tribunale,
-        "spiegazione": spiegazione,
-        "filtri": {
-            "tipo_override": tipo_override,
-            "tribunale_override": tribunale_override,
-            "anno_da": anno_da,
-            "anno_a": anno_a,
-            "portata": portata,
-        },
-        "totale": len(risultati),
+        "spiegazione":      spiegazione,
+        "totale":           len(risultati),
     })
 
 
-@app.get("/html_cantonale")
-async def html_cantonale(
-    url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
+# ── /cerca_stream  (SSE) ──────────────────────────────────────────────────────
+
+@app.get("/cerca_stream")
+async def cerca_stream(
+    query:   str           = Query(..., min_length=1),
+    lang:    str           = Query("it"),
+    limit:   int           = Query(8, ge=1, le=20),
+    anno_da: Optional[str] = Query(None),
+    anno_a:  Optional[str] = Query(None),
 ):
     """
-    Scarica e restituisce l'HTML pulito della sentenza (con grassetti, corsivi, tabelle)
-    per la visualizzazione completa con elementi originali nel frontend.
+    Ricerca federale con SSE.
+    I risultati arrivano uno alla volta in ordine di rilevanza, man mano che
+    ogni riassunto AI viene generato. Il frontend può renderizzare ogni card
+    non appena riceve l'evento corrispondente.
+
+    Formato eventi:
+      data: {"type": "status",  "message": "..."}
+      data: {"type": "result",  "rank": 1, "codice": "...", ...}
+      data: {"type": "done",    "totale": N}
+      data: {"type": "error",   "message": "..."}
     """
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    lang    = lang if lang in ("it", "de", "fr") else "it"
+    ai      = AsyncOpenAI(api_key=api_key) if api_key else None
+
+    async def generator() -> AsyncIterator[str]:
+        try:
+            async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
+
+                # 1. Ottimizza query
+                yield sse({"type": "status", "message": "Ottimizzazione query..."})
+                if ai:
+                    query_opt, spiegazione = await ottimizza_query(query, ai)
+                else:
+                    query_opt, spiegazione = query, ""
+                yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
+
+                # 2. Cerca su OpenCaseLaw
+                hits = await _ocl_search(query_opt, limit * 2, http)
+
+                # Filtro anno
+                if anno_da or anno_a:
+                    def _ok(h: dict) -> bool:
+                        m = re.search(r'\d{4}', h.get("decision_date", "") or "")
+                        if not m:
+                            return True
+                        y = int(m.group())
+                        return (not anno_da or y >= int(anno_da)) and (not anno_a or y <= int(anno_a))
+                    hits = [h for h in hits if _ok(h)]
+
+                hits = hits[:limit]
+
+                if not hits:
+                    yield sse({"type": "error", "message": "Nessun risultato trovato."})
+                    return
+
+                yield sse({"type": "status", "message": f"Trovate {len(hits)} sentenze — generazione riassunti..."})
+
+                # 3. Avvia TUTTI i task in parallelo (testo + riassunto) — corrono insieme
+                tasks = [
+                    asyncio.create_task(_elabora_risultato(h, i + 1, lang, ai, http))
+                    for i, h in enumerate(hits)
+                ]
+
+                # 4. Emetti in ordine di rank: aspetta il primo, poi il secondo, ecc.
+                #    I task successivi continuano a girare mentre aspettiamo quello corrente.
+                for task in tasks:
+                    risultato = await task
+                    yield sse({"type": "result", **risultato})
+
+                yield sse({"type": "done", "totale": len(hits),
+                           "query_ottimizzata": query_opt, "spiegazione": spiegazione})
+
+        except Exception as exc:
+            log.error("SSE stream error: %s", exc)
+            yield sse({"type": "error", "message": str(exc)})
+
+    return StreamingResponse(
+        generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",   # disabilita il buffering in Nginx/Render
+        },
+    )
+
+
+# ── /sintesi_federal  (+ alias /sintesi) ─────────────────────────────────────
+
+_SINTESI_SYSTEM = """Sei un esperto legale svizzero. Produci riassunti strutturati di sentenze
+del Tribunale federale nella lingua richiesta.
+
+Usa questo formato (titolo in grassetto, testo a seguire):
+
+**Fattispecie**
+[fatti: chi, cosa, iter procedurale]
+
+**Questione giuridica**
+[problema centrale e articoli applicati]
+
+**Considerandi**
+[ragionamento del Tribunale, precedenti]
+
+**Dispositivo**
+[decisione finale e conseguenze]
+
+Sii preciso e professionale. Usa i termini giuridici corretti nella lingua richiesta."""
+
+_SINTESI_USER = {
+    "it": "Riassumi in italiano:\n\n{testo}",
+    "de": "Fasse auf Deutsch zusammen:\n\n{testo}",
+    "fr": "Résume en français:\n\n{testo}",
+}
+
+async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
+    api_key = os.environ.get("OPENAI_API_KEY", "")
+    if not api_key:
+        return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
+    lang = lang if lang in ("it", "de", "fr") else "it"
+
+    async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
+        hits = await _ocl_search(codice, 1, http)
+        if not hits:
+            return JSONResponse({"errore": f"Sentenza non trovata: {codice}"}, status_code=404)
+        hit       = hits[0]
+        dec_id    = hit.get("decision_id", "")
+        full_text = await _ocl_full_text(dec_id, http)
+
+    if len(full_text) < 100:
+        return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
+
+    ai = AsyncOpenAI(api_key=api_key)
+    try:
+        msg = await ai.chat.completions.create(
+            model="gpt-4o-mini", max_tokens=1400,
+            messages=[
+                {"role": "system", "content": _SINTESI_SYSTEM},
+                {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:12000])},
+            ],
+        )
+        sintesi = msg.choices[0].message.content
+    except Exception as exc:
+        return JSONResponse({"errore": f"Errore AI: {exc}"}, status_code=500)
+
+    court_raw = hit.get("court_name") or hit.get("court") or "BGer"
+    return JSONResponse({
+        "sintesi":       sintesi,
+        "data_sentenza": formatta_data(hit.get("decision_date", "")),
+        "codice":        hit.get("docket_number", codice),
+        "tribunale":     normalizza_tribunale(court_raw),
+        "lingua_orig":   hit.get("language", ""),
+        "source":        "opencaselaw.ch",
+    })
+
+@app.get("/sintesi_federal")
+async def sintesi_federal(
+    codice: str = Query(..., description="Codice sentenza (es. 6B_51/2021)"),
+    lang:   str = Query("it"),
+):
+    """Riassunto AI strutturato di una sentenza federale specifica."""
+    return await _sintesi_impl(codice, lang)
+
+@app.get("/sintesi")
+async def sintesi(
+    codice: str = Query(...),
+    lang:   str = Query("it"),
+):
+    """Alias di /sintesi_federal (compatibilità con sententia-api-3.onrender.com)."""
+    return await _sintesi_impl(codice, lang)
+
+
+# ── /articolo_fedlex ─────────────────────────────────────────────────────────
+
+@app.get("/articolo_fedlex")
+async def articolo_fedlex(
+    rs:   str = Query(..., description="Numero RS (es. 311.0)"),
+    art:  str = Query(..., description="Numero articolo (es. 53)"),
+    lang: str = Query("it"),
+):
+    """Testo di un articolo di legge federale via fedlex-connector.ch."""
+    lang = lang if lang in ("it", "de", "fr") else "it"
+    payload = {
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": "get_article",
+            "arguments": {"rs_number": rs, "article": art, "language": lang},
+        },
+    }
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        try:
+            resp = await client.post(
+                "https://mcp.fedlex-connector.ch/",
+                json=payload,
+                headers={"Accept": "application/json, text/event-stream"},
+            )
+        except Exception as exc:
+            return JSONResponse({"errore": f"Fedlex proxy error: {exc}"}, status_code=502)
+
+    m = re.search(r'^data:\s*(.+)$', resp.text, re.MULTILINE)
+    if not m:
+        return JSONResponse({"errore": "Risposta non valida da fedlex-connector.ch"}, status_code=502)
+    try:
+        data = json.loads(m.group(1))
+    except Exception:
+        return JSONResponse({"errore": "JSON non valido"}, status_code=502)
+
+    if data.get("result", {}).get("isError"):
+        msg = (data["result"].get("content") or [{}])[0].get("text", "Errore sconosciuto")
+        return JSONResponse({"errore": msg}, status_code=404)
+
+    text = (data.get("result", {}).get("content") or [{}])[0].get("text", "")
+    return JSONResponse({"testo": text, "rs": rs, "art": art, "lang": lang})
+
+
+# ── /html_federale ────────────────────────────────────────────────────────────
+
+@app.get("/html_federale")
+async def html_federale(
+    url: str = Query(..., description="URL sentenza (es. https://bger.li/6B_51-2021)"),
+):
+    """Scarica e restituisce l'HTML pulito di una sentenza federale da bger.li."""
+    async with httpx.AsyncClient(
+        timeout=20.0, follow_redirects=True, headers=HTTP_HEADERS
+    ) as client:
         try:
             resp = await client.get(url)
             resp.raise_for_status()
         except Exception as exc:
-            return JSONResponse(
-                {"errore": f"Impossibile scaricare la sentenza: {exc}"},
-                status_code=502,
-            )
+            return JSONResponse({"errore": f"Download fallito: {exc}"}, status_code=502)
 
-    soup = BeautifulSoup(resp.content.decode("cp1252", errors="replace"), "html.parser")
-    # Rimuovi elementi di navigazione, script, form
-    for tag in soup.find_all(["nav", "header", "footer", "script", "style", "form", "noscript"]):
-        tag.decompose()
-    # Rimuovi anche il banner/logo del portale (prima tabella)
-    tables = soup.find_all("table")
-    if tables:
-        tables[0].decompose()
-
-    content_el = soup.find("body") or soup
-    html_content = str(content_el)
-
-    if len(html_content) < 50:
-        return JSONResponse({"errore": "Contenuto non trovato nella pagina."}, status_code=400)
-
-    return JSONResponse({"html": html_content, "url": url})
-
-
-@app.get("/testo_cantonale")
-async def testo_cantonale(
-    url: str = Query(..., description="URL completo della sentenza su sentenze.ti.ch"),
-):
-    """
-    Scarica e restituisce il testo pulito di una sentenza cantonale,
-    per la visualizzazione in anteprima nel frontend.
-    """
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True, headers=HTTP_HEADERS) as client:
-        try:
-            resp = await client.get(url)
-            resp.raise_for_status()
-        except Exception as exc:
-            return JSONResponse(
-                {"errore": f"Impossibile scaricare la sentenza: {exc}"},
-                status_code=502,
-            )
-
-    html_text = resp.content.decode("cp1252", errors="replace")
-    soup = BeautifulSoup(html_text, "html.parser")
-    for tag in soup.find_all(["nav", "header", "footer", "script", "style"]):
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup.find_all(["nav", "header", "footer", "script", "style",
+                              "form", "noscript", "iframe", "aside"]):
         tag.decompose()
 
-    content_el = (
-        soup.find("div", class_=re.compile(r"content|document|testo|sentenza|main|article", re.I))
+    content = (
+        soup.find("div", id=re.compile(r"content|main|document|decision", re.I))
         or soup.find("article")
         or soup.find("main")
         or soup.find("body")
     )
-    testo = content_el.get_text(" ", strip=True) if content_el else ""
+    html_out = str(content or soup)
 
-    if len(testo) < 30:
-        return JSONResponse({"errore": "Testo non trovato nella pagina."}, status_code=400)
+    if len(html_out) < 100:
+        return JSONResponse({"errore": "Contenuto non trovato."}, status_code=400)
 
-    return JSONResponse({"testo": testo, "url": url})
+    return JSONResponse({"html": html_out, "url": url})
 
+
+# ── /health ───────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "portale": PORTAL_BASE}
+    return {
+        "status":        "ok",
+        "opencaselaw":   OPENCASELAW_BASE,
+        "openai_key_set": bool(os.environ.get("OPENAI_API_KEY")),
+    }
 
 
-# ─── Entry point ─────────────────────────────────────────────────────────────
+# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8002, reload=True)
