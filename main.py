@@ -56,6 +56,22 @@ HTTP_HEADERS = {
     "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
 }
 
+# Tribunali federali riconosciuti (tutto il resto è cantonale)
+_FEDERAL_COURT_KEYWORDS = {
+    "bundesgericht", "tribunal fédéral", "tribunale federale",
+    "bundesverwaltungsgericht", "tribunal administratif fédéral",
+    "bundesstrafgericht", "tribunal pénal fédéral",
+    "bundespatentgericht", "bger", "bvger", "bstger", "bpatger",
+}
+
+def _rileva_tipo(court_raw: str) -> str:
+    """Restituisce 'federal' se il tribunale è federale, altrimenti 'cantonal'."""
+    key = court_raw.lower().strip()
+    for kw in _FEDERAL_COURT_KEYWORDS:
+        if kw in key:
+            return "federal"
+    return "cantonal"
+
 # Prefisso numero di dossier → area giuridica
 AREA_MAP: dict[str, str] = {
     "6": "penale", "7": "penale",
@@ -223,6 +239,163 @@ async def genera_riassunto(testo: str, lang: str, ai: AsyncOpenAI) -> str:
         return ""
 
 
+# ── Cantonal helpers: Ticino (sentenze.ti.ch) ────────────────────────────────
+
+_TI_OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica del Canton Ticino.
+Trasforma la query naturale nella forma ottimale per il motore di sentenze.ti.ch.
+Operatori: AND, OR, NOT, virgolette per frasi esatte.
+Usa sempre AND per combinare termini.
+Tipi: "testo" (concetti), "titolo" (parole chiave precise), "articoli" (solo se c'è art.+numero+codice), "indice".
+Rispondi SOLO con JSON: {"query_ottimizzata": "...", "tipo_ricerca": "testo|titolo|articoli|indice", "spiegazione": "..."}"""
+
+async def _ottimizza_query_ti(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
+    try:
+        resp = await ai.chat.completions.create(
+            model="gpt-4o-mini", max_tokens=200, temperature=0,
+            messages=[
+                {"role": "system", "content": _TI_OPTIMIZER_SYSTEM},
+                {"role": "user",   "content": f'Query: "{query}"'},
+            ],
+        )
+        raw = resp.choices[0].message.content.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        if m:
+            d = json.loads(m.group())
+            return d.get("query_ottimizzata", query), d.get("tipo_ricerca", "testo")
+    except Exception as exc:
+        log.warning("TI optimizer error: %s", exc)
+    return query, "testo"
+
+async def _cerca_sul_portale_ti(
+    query: str, tipo: str, limit: int,
+    area_filter: Optional[str],
+    anno_da: Optional[str], anno_a: Optional[str],
+    http: httpx.AsyncClient,
+) -> list[dict]:
+    """Cerca su sentenze.ti.ch tramite il CGI Omnis Studio."""
+    params: dict[str, str] = dict(TI_OMNIS_HIDDEN)
+    form_action = TI_PORTAL_CGI
+    try:
+        form_resp = await http.get(TI_PORTAL_SEARCH, headers=TI_HTTP_HEADERS, timeout=20.0)
+        soup_form = BeautifulSoup(form_resp.content.decode("cp1252", errors="replace"), "html.parser")
+        form = soup_form.find("form")
+        if form:
+            action = form.get("action", "")
+            if action:
+                form_action = action if action.startswith("http") else TI_PORTAL_BASE + action
+            for hidden in form.find_all("input", type="hidden"):
+                n, v = hidden.get("name",""), hidden.get("value","")
+                if n: params[n] = v
+            # Checkbox tribunali/area
+            if area_filter:
+                allowed = set(TI_AREA_CHECKBOXES.get(area_filter, TI_ALL_CHECKBOXES))
+            else:
+                allowed = TI_ALL_CHECKBOXES
+            for cb in form.find_all("input", {"type":"checkbox"}):
+                n, v = cb.get("name",""), cb.get("value","")
+                if not n or not v: continue
+                if n.startswith("bInfoArt_"):
+                    if n in allowed: params[n] = v
+                else:
+                    params[n] = v
+    except Exception as exc:
+        log.warning("TI form load error: %s — using fallback params", exc)
+        for cb_name in (TI_AREA_CHECKBOXES.get(area_filter, []) if area_filter else TI_ALL_CHECKBOXES):
+            params[cb_name] = cb_name.replace("bInfoArt_","").rstrip("1")
+
+    params.update({
+        "Aufruf": "validate",
+        "Template": "results/resultpage_ita.fiw",
+        "cSprache": "ITA",
+        "cSuchstring": query,
+        "cSuchstringZiel": tipo,
+        "nSeite": "1",
+        "nAnzahlTrefferProSeite": str(max(limit, 10)),
+        "cButtonAction": "3. Trova",
+    })
+    if anno_da: params["cEntscheiddatumVonJahr"] = str(anno_da)
+    if anno_a:  params["cEntscheiddatumBisJahr"] = str(anno_a)
+
+    try:
+        resp = await http.post(form_action, data=params, headers=TI_HTTP_HEADERS, timeout=30.0)
+        html_text = resp.content.decode("cp1252", errors="replace")
+        return _parse_results_ti(html_text)[:limit]
+    except Exception as exc:
+        log.error("TI portal POST failed: %s", exc)
+        return []
+
+def _parse_results_ti(html: str) -> list[dict]:
+    soup = BeautifulSoup(html, "html.parser")
+    results = []
+    links = soup.find_all("a", href=lambda h: h and "getMarkupDocument" in h)
+    for link_el in links[:10]:
+        href = link_el["href"]
+        url  = href if href.startswith("http") else TI_PORTAL_BASE + href
+        titolo = link_el.get_text(strip=True)
+        for ch, rep in [('','‘'),('','’'),('','“'),('','”')]:
+            titolo = titolo.replace(ch, rep)
+        title_attr = link_el.get("title","")
+        incarto_m  = TI_INCARTO_PATTERN.search(title_attr)
+        incarto    = incarto_m.group(0) if incarto_m else ""
+        parent     = link_el.find_parent("table")
+        block_text = parent.get_text(" ", strip=True) if parent else ""
+        dates   = TI_DATE_PATTERN.findall(block_text)
+        court_m = TI_COURT_PATTERN.search(block_text)
+        court   = court_m.group(1) if court_m else ""
+        if not incarto:
+            im = TI_INCARTO_PATTERN.search(block_text)
+            incarto = im.group(0) if im else ""
+        anno_str = dates[0][-4:] if dates else ""
+        results.append({
+            "incarto": incarto,
+            "tribunale_abbr": court,
+            "tribunale_nome": TI_COURT_NAMES.get(court, court),
+            "data": dates[0] if dates else "",
+            "anno": int(anno_str) if anno_str.isdigit() else 0,
+            "url": url,
+            "titolo": titolo,
+            "area": _ti_court_to_area(court),
+        })
+    return results
+
+async def _fetch_full_text_ti(url: str, http: httpx.AsyncClient) -> str:
+    """Scarica il testo completo di una sentenza dal portale TI."""
+    try:
+        resp = await http.get(url, headers=TI_HTTP_HEADERS, timeout=20.0)
+        html = resp.content.decode("cp1252", errors="replace")
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup.find_all(["script","style","nav","header","footer"]):
+            tag.decompose()
+        body = soup.find("body") or soup
+        return body.get_text(" ", strip=True)[:8000]
+    except Exception as exc:
+        log.warning("TI full text fetch error (%s): %s", url, exc)
+        return ""
+
+async def _elabora_risultato_ti(
+    hit: dict, rank: int, lang: str,
+    ai: Optional[AsyncOpenAI], http: httpx.AsyncClient,
+) -> dict:
+    testo = await _fetch_full_text_ti(hit["url"], http)
+    riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else hit["titolo"]
+    art   = estrai_articoli(testo) if testo else estrai_articoli(riass)
+    if not art and riass:
+        art = estrai_articoli(riass)
+    canton_label = f"{TI_COURT_NAMES.get(hit['tribunale_abbr'], hit['tribunale_nome'])} — TI"
+    return {
+        "rank":      rank,
+        "codice":    hit["incarto"] or f"TI-{rank}",
+        "tribunale": canton_label,
+        "tipo":      "cantonal",
+        "area":      hit["area"],
+        "data":      hit["data"],
+        "anno":      hit["anno"],
+        "url":       hit["url"],
+        "riassunto": riass,
+        "articoli":  art,
+    }
+
+
 # ── OpenCaseLaw helpers ───────────────────────────────────────────────────────
 
 async def _ocl_search(query: str, limit: int, http: httpx.AsyncClient) -> list[dict]:
@@ -266,11 +439,12 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
     # Usa l'URL fornito da OCL se disponibile, altrimenti costruisce bger.li
     url_ocl   = hit.get("url") or hit.get("source_url") or hit.get("decision_url") or ""
     url_final = url_ocl if url_ocl.startswith("http") else costruisci_url_bger(docket)
+    tipo = _rileva_tipo(court_raw)
     return {
         "rank":        rank,
         "codice":      docket,
         "tribunale":   normalizza_tribunale(court_raw),
-        "tipo":        "federal",
+        "tipo":        tipo,
         "area":        rileva_area(docket),
         "data":        data_fmt,
         "anno":        anno,
@@ -380,9 +554,8 @@ async def cerca_stream(
 
     async def generator() -> AsyncIterator[str]:
         try:
-            async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as http:
 
-                # 1. Ottimizza query
                 yield sse({"type": "status", "message": "Ottimizzazione query..."})
                 if ai:
                     query_opt, spiegazione = await ottimizza_query(query, ai)
@@ -390,50 +563,52 @@ async def cerca_stream(
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # 2. Cerca su OpenCaseLaw — se c'è filtro area, prendiamo più risultati
-                #    così dopo il filtro ne restano abbastanza (3x è sufficiente per la maggior parte dei casi)
-                fetch_limit = limit * 3 if area_filter else limit * 2
-                hits = await _ocl_search(query_opt, min(fetch_limit, 30), http)
+                # Se filtro tipo o area, prendiamo più risultati per compensare il filtro
+                needs_extra = bool(tipo_filter or area_filter)
+                fetch_limit = limit * 4 if needs_extra else limit * 2
+                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http)
 
                 # Filtro anno
                 if anno_da or anno_a:
                     def _ok_anno(h: dict) -> bool:
                         m = re.search(r'\d{4}', h.get("decision_date", "") or "")
-                        if not m:
-                            return True
+                        if not m: return True
                         y = int(m.group())
                         return (not anno_da or y >= int(anno_da)) and (not anno_a or y <= int(anno_a))
                     hits = [h for h in hits if _ok_anno(h)]
 
-                # Filtro area giuridica (basato sul prefisso del numero di dossier)
+                # Filtro area giuridica
                 if area_filter:
                     hits = [h for h in hits
-                            if rileva_area(
-                                h.get("docket_number") or h.get("file_number") or ""
-                            ) == area_filter]
+                            if rileva_area(h.get("docket_number") or h.get("file_number") or "") == area_filter]
+
+                # Filtro tipo (federal / cantonal) — rilevato dal nome del tribunale
+                if tipo_filter in ("federal", "cantonal"):
+                    hits = [h for h in hits
+                            if _rileva_tipo(h.get("court_name") or h.get("court") or "") == tipo_filter]
 
                 hits = hits[:limit]
 
                 if not hits:
-                    msg = (f"Nessuna sentenza trovata nell'area '{area_filter}'."
-                           if area_filter else "Nessun risultato trovato.")
+                    if tipo_filter == "cantonal":
+                        msg = "Nessuna sentenza cantonale trovata per questa ricerca su OpenCaseLaw."
+                    elif area_filter:
+                        msg = f"Nessuna sentenza trovata nell'area '{area_filter}'."
+                    else:
+                        msg = "Nessun risultato trovato."
                     yield sse({"type": "error", "message": msg})
                     return
 
                 yield sse({"type": "status",
                            "message": f"Trovate {len(hits)} sentenze — generazione riassunti..."})
 
-                # 3. Avvia TUTTI i task in parallelo
                 tasks = [
                     asyncio.create_task(_elabora_risultato(h, i + 1, lang, ai, http))
                     for i, h in enumerate(hits)
                 ]
-
-                # 4. Emetti in ordine di rank
                 for task in tasks:
                     risultato = await task
                     yield sse({"type": "result", **risultato})
-
                 yield sse({"type": "done", "totale": len(hits),
                            "query_ottimizzata": query_opt, "spiegazione": spiegazione})
 
