@@ -628,28 +628,67 @@ async def cerca_stream(
 
 # ── /sintesi_federal  (+ alias /sintesi) ─────────────────────────────────────
 
-_SINTESI_SYSTEM = """Sei un esperto legale svizzero. Produci riassunti strutturati di sentenze del Tribunale federale svizzero.
-Il riassunto deve essere scritto nella lingua richiesta dall'utente (italiano, tedesco o francese), indipendentemente dalla lingua originale della sentenza.
-Usa sempre questo formato — ogni sezione inizia con il titolo in grassetto su una riga, seguito dal testo:
-
-**Fattispecie**
-[fatti rilevanti del caso: chi, cosa, iter procedurale]
-
-**Questione giuridica**
-[problema legale centrale e articoli principali applicati]
-
-**Considerandi**
-[analisi giuridica del Tribunale, ragionamento, precedenti citati]
-
-**Dispositivo**
-[decisione finale e conseguenze pratiche]
-
-Regole: sii preciso e professionale; non inventare fatti non presenti nel testo; usa i termini giuridici corretti nella lingua richiesta."""
+_SINTESI_SYSTEM = {
+    "it": (
+        "Sei un avvocato svizzero con profonda competenza in diritto federale. "
+        "Produci analisi giuridiche professionali, strutturate e complete di sentenze del Tribunale federale. "
+        "Il tuo linguaggio è tecnico, preciso e adatto a professionisti del diritto."
+    ),
+    "de": (
+        "Du bist ein Schweizer Rechtsanwalt mit fundierter Expertise im Bundesrecht. "
+        "Du erstellst professionelle, strukturierte und vollständige rechtliche Analysen von Bundesgerichtsurteilen. "
+        "Deine Sprache ist technisch, präzise und für Rechtsfachleute geeignet."
+    ),
+    "fr": (
+        "Vous êtes un avocat suisse avec une profonde expertise en droit fédéral. "
+        "Vous produisez des analyses juridiques professionnelles, structurées et complètes des arrêts du Tribunal fédéral. "
+        "Votre langage est technique, précis et adapté aux professionnels du droit."
+    ),
+}
 
 _SINTESI_USER = {
-    "it": "Riassumi in italiano questa sentenza del Tribunale federale svizzero:\n\n{testo}",
-    "de": "Fasse dieses Schweizer Bundesgerichtsurteil auf Deutsch zusammen:\n\n{testo}",
-    "fr": "Résume en français cet arrêt du Tribunal fédéral suisse:\n\n{testo}",
+    "it": (
+        "Analizza in modo completo e professionale la seguente sentenza del Tribunale federale svizzero. "
+        "Struttura la tua analisi esattamente come segue:\n\n"
+        "**1. Fattispecie**\n"
+        "In 2-3 frasi: parti coinvolte, questione giuridica centrale e iter procedurale.\n\n"
+        "**2. Articoli principali applicati**\n"
+        "Elenca in modo puntuale tutti gli articoli di legge citati o applicati (indicando codice e numero, es. art. 41 CO, art. 146 CP).\n\n"
+        "**3. Considerazioni del Tribunale**\n"
+        "Esponi il ragionamento giuridico adottato dalla corte: interpretazione normativa, bilanciamento degli interessi, "
+        "giurisprudenza richiamata e argomenti decisivi.\n\n"
+        "**4. Dispositivo e implicazioni**\n"
+        "In 2 frasi: esito del giudizio (accoglimento/rigetto/rinvio) e principale implicazione pratica.\n\n"
+        "Testo della sentenza:\n{testo}"
+    ),
+    "de": (
+        "Analysiere das folgende Urteil des Schweizer Bundesgerichts vollständig und professionell. "
+        "Strukturiere deine Analyse genau wie folgt:\n\n"
+        "**1. Sachverhalt**\n"
+        "In 2-3 Sätzen: beteiligte Parteien, zentrale Rechtsfrage und Verfahrensgang.\n\n"
+        "**2. Massgebende Rechtsartikel**\n"
+        "Liste alle zitierten oder angewendeten Gesetzesartikel auf (mit Angabe des Gesetzes und Nummer, z.B. Art. 41 OR).\n\n"
+        "**3. Erwägungen des Gerichts**\n"
+        "Stelle die rechtliche Argumentation des Gerichts dar: Normeninterpretation, Interessenabwägung, "
+        "herangezogene Rechtsprechung und entscheidende Argumente.\n\n"
+        "**4. Dispositiv und Implikationen**\n"
+        "In 2 Sätzen: Urteilsergebnis (Gutheissung/Abweisung/Rückweisung) und wichtigste praktische Implikation.\n\n"
+        "Urteilstext:\n{testo}"
+    ),
+    "fr": (
+        "Analysez de manière complète et professionnelle l'arrêt du Tribunal fédéral suisse ci-dessous. "
+        "Structurez votre analyse exactement comme suit:\n\n"
+        "**1. Faits et procédure**\n"
+        "En 2-3 phrases: parties impliquées, question juridique centrale et déroulement de la procédure.\n\n"
+        "**2. Articles principaux appliqués**\n"
+        "Listez tous les articles de loi cités ou appliqués (avec indication du code et du numéro, ex. art. 41 CO).\n\n"
+        "**3. Considérants du Tribunal**\n"
+        "Exposez le raisonnement juridique: interprétation normative, pesée des intérêts, "
+        "jurisprudence citée et arguments décisifs.\n\n"
+        "**4. Dispositif et implications**\n"
+        "En 2 phrases: issue du jugement (admission/rejet/renvoi) et principale implication pratique.\n\n"
+        "Texte de l'arrêt:\n{testo}"
+    ),
 }
 
 async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
@@ -674,7 +713,7 @@ async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
         msg = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=1400,
             messages=[
-                {"role": "system", "content": _SINTESI_SYSTEM},
+                {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
                 {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:12000])},
             ],
         )
