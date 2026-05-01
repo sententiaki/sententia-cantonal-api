@@ -64,20 +64,23 @@ AREA_MAP: dict[str, str] = {
     "1": "pubblico", "2": "pubblico", "3": "pubblico",
 }
 
-# Nome tribunale grezzo → etichetta display
-COURT_DISPLAY: dict[str, str] = {
-    "bundesgericht":           "BGer — Tribunale federale",
-    "tribunal fédéral":        "BGer — Tribunale federale",
-    "tribunale federale":      "BGer — Tribunale federale",
-    "bger":                    "BGer — Tribunale federale",
-    "bge":                     "BGer — Tribunale federale",
-    "bundesverwaltungsgericht":"BVGer — Trib. amm. federale",
-    "tribunal administratif fédéral": "BVGer — Trib. amm. federale",
-    "bvger":                   "BVGer — Trib. amm. federale",
-    "bundesstrafgericht":      "BStGer — Trib. penale federale",
-    "tribunal pénal fédéral":  "BStGer — Trib. penale federale",
-    "bstger":                  "BStGer — Trib. penale federale",
-}
+# Nome tribunale grezzo → etichetta display (ordinato dal più specifico al meno specifico)
+COURT_DISPLAY: list[tuple[str, str]] = [
+    ("bundesverwaltungsgericht",        "BVGer — Trib. amm. federale"),
+    ("tribunal administratif fédéral",  "BVGer — Trib. amm. federale"),
+    ("verwaltungsgericht des bundes",   "BVGer — Trib. amm. federale"),
+    ("bvger",                           "BVGer — Trib. amm. federale"),
+    ("bundesstrafgericht",              "BStGer — Trib. penale federale"),
+    ("tribunal pénal fédéral",          "BStGer — Trib. penale federale"),
+    ("bstger",                          "BStGer — Trib. penale federale"),
+    ("bundespatentgericht",             "BPatGer — Trib. fed. brevetti"),
+    ("bundesgericht",                   "BGer — Tribunale federale"),
+    ("tribunal fédéral",                "BGer — Tribunale federale"),
+    ("tribunale federale",              "BGer — Tribunale federale"),
+    ("federal supreme court",           "BGer — Tribunale federale"),
+    ("bger",                            "BGer — Tribunale federale"),
+    ("bge",                             "BGer — Tribunale federale"),
+]
 
 # Abbreviazioni legge per la normalizzazione
 LAW_ALIASES: dict[str, str] = {
@@ -89,14 +92,18 @@ LAW_ALIASES: dict[str, str] = {
 }
 
 # Regex per l'estrazione degli articoli dal testo
+# Pattern principale: "Art. 53 CP" / "art 336 CO" / "Art. 8a CC"
 _CODES = (
     "CP|StGB|CO|OR|CPP|StPO|LTF|BGG|BV|Cost\\.|Cst\\.|ZPO|CPC"
     "|LPD|DSG|CC|ZGB|LAMal|KVG|LAINF|LAA|LAVS|AHVG|LAI|IVG"
     "|LEF|SchKG|LIFD|DBG|LIVA|MWSTG|LCD|UWG|LCart|KG|LPM|MSchG"
-    "|LFus|FusG|LDIP|IPRG|PA|VwVG|LTF"
+    "|LFus|FusG|LDIP|IPRG|PA|VwVG"
 )
+# Cattura: "Art.? N [cpv/abs/al/lett N] CODE"  oppure  "articolo N CODE"
 ARTICLE_RE = re.compile(
-    r'[Aa]rt\.?\s+(\d+[a-z]?)(?:\s+(?:cpv|abs|al|lett?|lit)\.?\s*\d+)?'
+    r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]?)'
+    r'(?:\s+(?:cpv|abs|al|lett?|lit)\.?\s*\d+)?'
+    r'(?:\s+(?:del|della|des?|von|du|de\s+la))?'
     r'\s+(' + _CODES + r')\b',
     re.UNICODE,
 )
@@ -121,10 +128,12 @@ def rileva_area(docket: str) -> str:
 
 def normalizza_tribunale(raw: str) -> str:
     key = raw.lower().strip()
-    for k, v in COURT_DISPLAY.items():
+    for k, v in COURT_DISPLAY:
         if k in key:
             return v
-    return raw.strip() or "BGer — Tribunale federale"
+    # Fallback: pulisce il nome grezzo (rimuove parti dopo virgola/trattino)
+    clean = re.split(r'[,\-–]', raw.strip())[0].strip()
+    return clean if clean else "BGer — Tribunale federale"
 
 def formatta_data(raw: str) -> str:
     m = re.match(r'(\d{4})-(\d{2})-(\d{2})', raw or "")
@@ -178,19 +187,22 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
 
 _SUMMARY_SYSTEM = {
     "it": (
-        "Sei un esperto legale svizzero. Scrivi un riassunto di questa sentenza federale "
-        "in italiano (120–160 parole). Descrivi il problema giuridico centrale, l'analisi "
-        "del tribunale e l'esito. Cita gli articoli applicati. Testo fluente, nessun titolo."
+        "Sei un esperto legale svizzero. Scrivi un riassunto di questa sentenza in italiano, "
+        "massimo 70 parole. Descrivi in modo conciso: il problema giuridico, la decisione del "
+        "tribunale e l'esito. Menziona gli articoli applicati nel formato standard "
+        "(es. Art. 53 CP, Art. 336 CO). Solo testo fluente, nessun titolo, nessun elenco."
     ),
     "de": (
-        "Du bist ein Schweizer Rechtsexperte. Schreibe eine Zusammenfassung dieses "
-        "Bundesgerichtsurteils auf Deutsch (120–160 Wörter). Beschreibe die Rechtsfrage, "
-        "die Analyse und das Ergebnis. Zitiere die angewandten Artikel. Fließender Text."
+        "Du bist ein Schweizer Rechtsexperte. Schreibe eine Zusammenfassung dieses Urteils "
+        "auf Deutsch, maximal 70 Wörter. Beschreibe knapp: die Rechtsfrage, die Analyse und "
+        "das Ergebnis. Nenne die angewandten Artikel im Standardformat (z.B. Art. 53 StGB, "
+        "Art. 336 OR). Nur Fließtext, keine Titel, keine Listen."
     ),
     "fr": (
-        "Tu es un expert juridique suisse. Rédige un résumé de cet arrêt fédéral en "
-        "français (120–160 mots). Décris la question juridique, l'analyse et l'issue. "
-        "Cite les articles appliqués. Texte fluide, sans titres."
+        "Tu es un expert juridique suisse. Rédige un résumé de cet arrêt en français, "
+        "maximum 70 mots. Décris brièvement: la question juridique, l'analyse et l'issue. "
+        "Mentionne les articles appliqués au format standard (ex. Art. 53 CP, Art. 336 CO). "
+        "Texte fluide uniquement, sans titres ni listes."
     ),
 }
 
@@ -199,7 +211,7 @@ async def genera_riassunto(testo: str, lang: str, ai: AsyncOpenAI) -> str:
         return ""
     try:
         resp = await ai.chat.completions.create(
-            model="gpt-4o-mini", max_tokens=380, temperature=0.25,
+            model="gpt-4o-mini", max_tokens=200, temperature=0.2,
             messages=[
                 {"role": "system", "content": _SUMMARY_SYSTEM.get(lang, _SUMMARY_SYSTEM["it"])},
                 {"role": "user",   "content": testo[:6000]},
@@ -251,6 +263,9 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
     anno_m    = re.search(r'\d{4}', data_raw)
     anno      = int(anno_m.group()) if anno_m else 0
     court_raw = hit.get("court_name") or hit.get("court") or "BGer"
+    # Usa l'URL fornito da OCL se disponibile, altrimenti costruisce bger.li
+    url_ocl   = hit.get("url") or hit.get("source_url") or hit.get("decision_url") or ""
+    url_final = url_ocl if url_ocl.startswith("http") else costruisci_url_bger(docket)
     return {
         "rank":        rank,
         "codice":      docket,
@@ -259,7 +274,7 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
         "area":        rileva_area(docket),
         "data":        data_fmt,
         "anno":        anno,
-        "url":         costruisci_url_bger(docket),
+        "url":         url_final,
         "decision_id": hit.get("decision_id", ""),
     }
 
@@ -271,7 +286,11 @@ async def _elabora_risultato(
     meta   = _hit_to_meta(hit, rank)
     testo  = await _ocl_full_text(meta["decision_id"], http)
     riass  = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
-    art    = estrai_articoli(testo or riass)
+    # Estrai articoli dal testo completo prima (più affidabile), poi dal riassunto
+    art = estrai_articoli(testo) if testo else estrai_articoli(riass)
+    # Se dal testo non è uscito niente, prova anche sul riassunto
+    if not art and riass:
+        art = estrai_articoli(riass)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
