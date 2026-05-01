@@ -358,12 +358,11 @@ async def cerca_stream(
     limit:   int           = Query(8, ge=1, le=20),
     anno_da: Optional[str] = Query(None),
     anno_a:  Optional[str] = Query(None),
+    area:    Optional[str] = Query(None),   # penale | civile | pubblico | sociale
+    tipo:    Optional[str] = Query(None),   # federal | cantonal
 ):
     """
-    Ricerca federale con SSE.
-    I risultati arrivano uno alla volta in ordine di rilevanza, man mano che
-    ogni riassunto AI viene generato. Il frontend può renderizzare ogni card
-    non appena riceve l'evento corrispondente.
+    Ricerca via SSE con supporto filtri area e tipo tribunale.
 
     Formato eventi:
       data: {"type": "status",  "message": "..."}
@@ -375,8 +374,19 @@ async def cerca_stream(
     lang    = lang if lang in ("it", "de", "fr") else "it"
     ai      = AsyncOpenAI(api_key=api_key) if api_key else None
 
+    # Normalizza filtri
+    area_filter = area.lower().strip() if area else None
+    tipo_filter = tipo.lower().strip() if tipo else None
+
     async def generator() -> AsyncIterator[str]:
         try:
+            # Sentenze cantonali: OCL non le ha ancora — avvisa subito
+            if tipo_filter == "cantonal":
+                yield sse({"type": "error",
+                           "message": "Le sentenze cantonali non sono ancora disponibili "
+                                      "tramite OpenCaseLaw. Prova senza il filtro Cantonale."})
+                return
+
             async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
 
                 # 1. Ottimizza query
@@ -387,35 +397,46 @@ async def cerca_stream(
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # 2. Cerca su OpenCaseLaw
-                hits = await _ocl_search(query_opt, limit * 2, http)
+                # 2. Cerca su OpenCaseLaw — se c'è filtro area, prendiamo più risultati
+                #    così dopo il filtro ne restano abbastanza
+                fetch_limit = limit * 5 if area_filter else limit * 2
+                hits = await _ocl_search(query_opt, min(fetch_limit, 50), http)
 
                 # Filtro anno
                 if anno_da or anno_a:
-                    def _ok(h: dict) -> bool:
+                    def _ok_anno(h: dict) -> bool:
                         m = re.search(r'\d{4}', h.get("decision_date", "") or "")
                         if not m:
                             return True
                         y = int(m.group())
                         return (not anno_da or y >= int(anno_da)) and (not anno_a or y <= int(anno_a))
-                    hits = [h for h in hits if _ok(h)]
+                    hits = [h for h in hits if _ok_anno(h)]
+
+                # Filtro area giuridica (basato sul prefisso del numero di dossier)
+                if area_filter:
+                    hits = [h for h in hits
+                            if rileva_area(
+                                h.get("docket_number") or h.get("file_number") or ""
+                            ) == area_filter]
 
                 hits = hits[:limit]
 
                 if not hits:
-                    yield sse({"type": "error", "message": "Nessun risultato trovato."})
+                    msg = (f"Nessuna sentenza trovata nell'area '{area_filter}'."
+                           if area_filter else "Nessun risultato trovato.")
+                    yield sse({"type": "error", "message": msg})
                     return
 
-                yield sse({"type": "status", "message": f"Trovate {len(hits)} sentenze — generazione riassunti..."})
+                yield sse({"type": "status",
+                           "message": f"Trovate {len(hits)} sentenze — generazione riassunti..."})
 
-                # 3. Avvia TUTTI i task in parallelo (testo + riassunto) — corrono insieme
+                # 3. Avvia TUTTI i task in parallelo
                 tasks = [
                     asyncio.create_task(_elabora_risultato(h, i + 1, lang, ai, http))
                     for i, h in enumerate(hits)
                 ]
 
-                # 4. Emetti in ordine di rank: aspetta il primo, poi il secondo, ecc.
-                #    I task successivi continuano a girare mentre aspettiamo quello corrente.
+                # 4. Emetti in ordine di rank
                 for task in tasks:
                     risultato = await task
                     yield sse({"type": "result", **risultato})
