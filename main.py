@@ -628,29 +628,28 @@ async def cerca_stream(
 
 # ── /sintesi_federal  (+ alias /sintesi) ─────────────────────────────────────
 
-_SINTESI_SYSTEM = """Sei un esperto legale svizzero. Produci riassunti strutturati di sentenze
-del Tribunale federale nella lingua richiesta.
-
-Usa questo formato (titolo in grassetto, testo a seguire):
+_SINTESI_SYSTEM = """Sei un esperto legale svizzero. Produci riassunti strutturati di sentenze del Tribunale federale svizzero.
+Il riassunto deve essere scritto nella lingua richiesta dall'utente (italiano, tedesco o francese), indipendentemente dalla lingua originale della sentenza.
+Usa sempre questo formato — ogni sezione inizia con il titolo in grassetto su una riga, seguito dal testo:
 
 **Fattispecie**
-[fatti: chi, cosa, iter procedurale]
+[fatti rilevanti del caso: chi, cosa, iter procedurale]
 
 **Questione giuridica**
-[problema centrale e articoli applicati]
+[problema legale centrale e articoli principali applicati]
 
 **Considerandi**
-[ragionamento del Tribunale, precedenti]
+[analisi giuridica del Tribunale, ragionamento, precedenti citati]
 
 **Dispositivo**
-[decisione finale e conseguenze]
+[decisione finale e conseguenze pratiche]
 
-Sii preciso e professionale. Usa i termini giuridici corretti nella lingua richiesta."""
+Regole: sii preciso e professionale; non inventare fatti non presenti nel testo; usa i termini giuridici corretti nella lingua richiesta."""
 
 _SINTESI_USER = {
-    "it": "Riassumi in italiano:\n\n{testo}",
-    "de": "Fasse auf Deutsch zusammen:\n\n{testo}",
-    "fr": "Résume en français:\n\n{testo}",
+    "it": "Riassumi in italiano questa sentenza del Tribunale federale svizzero:\n\n{testo}",
+    "de": "Fasse dieses Schweizer Bundesgerichtsurteil auf Deutsch zusammen:\n\n{testo}",
+    "fr": "Résume en français cet arrêt du Tribunal fédéral suisse:\n\n{testo}",
 }
 
 async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
