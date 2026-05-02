@@ -399,15 +399,15 @@ def _cpv_other_lang(cpv_str: str) -> str:
 
 def espandi_codici_articolo(query: str) -> str:
     """
-    Espande i codici legge con sigle equivalenti nelle altre lingue nazionali
-    e traduce il capoverso nella forma della lingua aggiunta.
+    Aggiunge una seconda forma dell'articolo nella lingua equivalente,
+    come riferimento separato (non due codici sullo stesso articolo).
 
     Esempi:
-      "Art. 111 CP"           →  "Art. 111 CP StGB"
-      "Art. 50 cpv. 1 CO"     →  "Art. 50 cpv. 1 CO OR Abs. 1"
-      "Art. 50 Abs. 1 OR"     →  "Art. 50 Abs. 1 OR CO cpv. 1"
-      "Art. 59 LTF"           →  "Art. 59 LTF BGG"
-      "violazione Art. 146 CP"→  "violazione Art. 146 CP StGB"
+      "Art. 111 CP"         →  "Art. 111 CP Art. 111 StGB"
+      "Art. 50 cpv. 1 CO"   →  "Art. 50 cpv. 1 CO Art. 50 Abs. 1 OR"
+      "Art. 50 Abs. 1 OR"   →  "Art. 50 Abs. 1 OR Art. 50 cpv. 1 CO"
+      "Art. 59 LTF"         →  "Art. 59 LTF Art. 59 BGG"
+      "violazione Art. 146 CP" → "violazione Art. 146 CP Art. 146 StGB"
     """
     def _expand(m: re.Match) -> str:
         art_part = m.group(1)          # "Art. 50"
@@ -416,16 +416,16 @@ def espandi_codici_articolo(query: str) -> str:
         extras   = _CODE_EQUIVALENTS.get(code, [])
         if not extras:
             return m.group(0)
-        # Per ogni codice equivalente, aggiungi anche il capoverso tradotto
+        # Costruisce il riferimento equivalente completo (stessa struttura, codice diverso)
         if cpv_part.strip():
             cpv_other = _cpv_other_lang(cpv_part.strip())
-            if cpv_other:
-                extras_str = " ".join(f"{e} {cpv_other}" for e in extras)
-            else:
-                extras_str = " ".join(extras)
+            alt_refs = " ".join(
+                f"{art_part} {cpv_other} {e}" if cpv_other else f"{art_part}{cpv_part} {e}"
+                for e in extras
+            )
         else:
-            extras_str = " ".join(extras)
-        return f"{art_part}{cpv_part} {code} {extras_str}"
+            alt_refs = " ".join(f"{art_part} {e}" for e in extras)
+        return f"{art_part}{cpv_part} {code} {alt_refs}"
 
     return _ART_CODE_RE.sub(_expand, query)
 
@@ -470,7 +470,11 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            return d.get("query_ottimizzata", query_exp), d.get("spiegazione", "")
+            raw_opt = d.get("query_ottimizzata", query_exp)
+            # Re-applica normalizzazione + espansione sull'output AI
+            # (l'AI potrebbe aver alterato i riferimenti articolo)
+            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
+            return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
     return query_exp, "Query diretta"
