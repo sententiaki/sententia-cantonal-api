@@ -72,6 +72,39 @@ def _rileva_tipo(court_raw: str) -> str:
             return "federal"
     return "cantonal"
 
+def _rileva_tribunal(court_raw: str) -> str:
+    """Restituisce 'bger' | 'bvger' | 'bstger' | 'bpatger' | '' per i tribunali federali."""
+    key = court_raw.lower().strip()
+    if any(kw in key for kw in ("bundesverwaltungsgericht", "tribunal administratif fédéral",
+                                  "tribunale amministrativo federale", "bvger")):
+        return "bvger"
+    if any(kw in key for kw in ("bundesstrafgericht", "tribunal pénal fédéral",
+                                  "tribunale penale federale", "bstger")):
+        return "bstger"
+    if any(kw in key for kw in ("bundespatentgericht", "bpatger")):
+        return "bpatger"
+    if any(kw in key for kw in ("bundesgericht", "tribunal fédéral", "tribunale federale",
+                                  "federal supreme court", "bger", "bge")):
+        return "bger"
+    return ""
+
+# Parole chiave per riconoscere il cantone dal nome del tribunale
+_CANTON_KEYWORDS: dict[str, list[str]] = {
+    "ti": ["ticino"],
+    "zh": ["zürich", "zurich"],
+    "be": ["bern", "berne"],
+    "ge": ["genf", "genève", "geneve", "canton de genève", "kanton genf"],
+    "vd": ["vaud", "waadt"],
+}
+
+def _rileva_cantone(court_raw: str) -> str:
+    """Restituisce la sigla del cantone ('ti', 'zh', ...) o '' se non riconosciuto."""
+    key = court_raw.lower().strip()
+    for canton, keywords in _CANTON_KEYWORDS.items():
+        if any(kw in key for kw in keywords):
+            return canton
+    return ""
+
 # Prefisso numero di dossier → area giuridica
 AREA_MAP: dict[str, str] = {
     "6": "penale", "7": "penale",
@@ -441,15 +474,18 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
     url_final = url_ocl if url_ocl.startswith("http") else costruisci_url_bger(docket)
     tipo = _rileva_tipo(court_raw)
     return {
-        "rank":        rank,
-        "codice":      docket,
-        "tribunale":   normalizza_tribunale(court_raw),
-        "tipo":        tipo,
-        "area":        rileva_area(docket),
-        "data":        data_fmt,
-        "anno":        anno,
-        "url":         url_final,
-        "decision_id": hit.get("decision_id", ""),
+        "rank":         rank,
+        "codice":       docket,
+        "tribunale":    normalizza_tribunale(court_raw),
+        "tipo":         tipo,
+        "tribunal_key": _rileva_tribunal(court_raw),
+        "canton_key":   _rileva_cantone(court_raw),
+        "camera":       hit.get("division") or hit.get("department") or hit.get("chamber") or "",
+        "area":         rileva_area(docket),
+        "data":         data_fmt,
+        "anno":         anno,
+        "url":          url_final,
+        "decision_id":  hit.get("decision_id", ""),
     }
 
 async def _elabora_risultato(
@@ -527,13 +563,16 @@ async def cerca(
 
 @app.get("/cerca_stream")
 async def cerca_stream(
-    query:   str           = Query(..., min_length=1),
-    lang:    str           = Query("it"),
-    limit:   int           = Query(8, ge=1, le=20),
-    anno_da: Optional[str] = Query(None),
-    anno_a:  Optional[str] = Query(None),
-    area:    Optional[str] = Query(None),   # penale | civile | pubblico | sociale
-    tipo:    Optional[str] = Query(None),   # federal | cantonal
+    query:    str           = Query(..., min_length=1),
+    lang:     str           = Query("it"),
+    limit:    int           = Query(8, ge=1, le=20),
+    anno_da:  Optional[str] = Query(None),
+    anno_a:   Optional[str] = Query(None),
+    area:     Optional[str] = Query(None),   # penale | civile | pubblico | sociale
+    tipo:     Optional[str] = Query(None),   # federal | cantonal
+    tribunal: Optional[str] = Query(None),   # bger | bvger | bstger
+    canton:   Optional[str] = Query(None),   # ti | zh | be | ge | vd
+    chamber:  Optional[str] = Query(None),   # nome sezione (filtro frontend)
 ):
     """
     Ricerca via SSE con supporto filtri area e tipo tribunale.
@@ -549,8 +588,10 @@ async def cerca_stream(
     ai      = AsyncOpenAI(api_key=api_key) if api_key else None
 
     # Normalizza filtri
-    area_filter = area.lower().strip() if area else None
-    tipo_filter = tipo.lower().strip() if tipo else None
+    area_filter     = area.lower().strip()     if area     else None
+    tipo_filter     = tipo.lower().strip()     if tipo     else None
+    tribunal_filter = tribunal.lower().strip() if tribunal else None   # bger | bvger | bstger
+    canton_filter   = canton.lower().strip()   if canton   else None   # ti | zh | be | ge | vd
 
     async def generator() -> AsyncIterator[str]:
         try:
@@ -563,8 +604,8 @@ async def cerca_stream(
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # Se filtro tipo o area, prendiamo più risultati per compensare il filtro
-                needs_extra = bool(tipo_filter or area_filter)
+                # Se attivi filtri che restringono, prendiamo più risultati per compensare
+                needs_extra = bool(tipo_filter or area_filter or tribunal_filter or canton_filter)
                 fetch_limit = limit * 4 if needs_extra else limit * 2
                 hits = await _ocl_search(query_opt, min(fetch_limit, 40), http)
 
@@ -582,16 +623,31 @@ async def cerca_stream(
                     hits = [h for h in hits
                             if rileva_area(h.get("docket_number") or h.get("file_number") or "") == area_filter]
 
-                # Filtro tipo (federal / cantonal) — rilevato dal nome del tribunale
+                # Helper comune per court_name
+                def _court(h: dict) -> str:
+                    return h.get("court_name") or h.get("court") or ""
+
+                # Filtro tipo (federal / cantonal)
                 if tipo_filter in ("federal", "cantonal"):
-                    hits = [h for h in hits
-                            if _rileva_tipo(h.get("court_name") or h.get("court") or "") == tipo_filter]
+                    hits = [h for h in hits if _rileva_tipo(_court(h)) == tipo_filter]
+
+                # Filtro tribunale specifico (bger / bvger / bstger)
+                if tribunal_filter:
+                    hits = [h for h in hits if _rileva_tribunal(_court(h)) == tribunal_filter]
+
+                # Filtro cantone specifico
+                if canton_filter:
+                    hits = [h for h in hits if _rileva_cantone(_court(h)) == canton_filter]
 
                 hits = hits[:limit]
 
                 if not hits:
-                    if tipo_filter == "cantonal":
+                    if canton_filter:
+                        msg = f"Nessuna sentenza trovata per il cantone '{canton_filter.upper()}' su OpenCaseLaw."
+                    elif tipo_filter == "cantonal":
                         msg = "Nessuna sentenza cantonale trovata per questa ricerca su OpenCaseLaw."
+                    elif tribunal_filter:
+                        msg = f"Nessuna sentenza trovata per il tribunale '{tribunal_filter.upper()}'."
                     elif area_filter:
                         msg = f"Nessuna sentenza trovata nell'area '{area_filter}'."
                     else:
