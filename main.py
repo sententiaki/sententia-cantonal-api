@@ -199,6 +199,96 @@ def sse(data: dict) -> str:
     return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# ── Query pre-processor: normalizza articoli prima dell'ottimizzazione AI ──────
+
+# Nomi di legge estesi → abbreviazione (IT / DE / FR)
+_LAW_NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
+    # Italiano
+    (re.compile(r'\bcodice\s+penale\b',                                    re.I), "CP"),
+    (re.compile(r'\bcodice\s+civile\b',                                    re.I), "CC"),
+    (re.compile(r'\bcodice\s+delle\s+obbligazioni\b',                      re.I), "CO"),
+    (re.compile(r'\bcodice\s+di\s+procedura\s+civile\b',                   re.I), "CPC"),
+    (re.compile(r'\bcodice\s+di\s+procedura\s+penale\b',                   re.I), "CPP"),
+    (re.compile(r'\blegge\s+sul\s+tribunale\s+federale\b',                 re.I), "LTF"),
+    (re.compile(r'\bcostituzione\s+federale\b',                            re.I), "Cost."),
+    (re.compile(r'\blegge\s+(?:federale\s+)?sulla\s+protezione\s+dei\s+dati\b', re.I), "LPD"),
+    (re.compile(r'\blegge\s+sull[ae]\s+esecuzione\b',                      re.I), "LEF"),
+    # Tedesco
+    (re.compile(r'\bstrafgesetzbuch\b',                                    re.I), "StGB"),
+    (re.compile(r'\bzivilgesetzbuch\b',                                    re.I), "ZGB"),
+    (re.compile(r'\bobligationenrecht\b',                                   re.I), "OR"),
+    (re.compile(r'\bzivilprozessordnung\b',                                re.I), "ZPO"),
+    (re.compile(r'\bstrafprozessordnung\b',                                re.I), "StPO"),
+    (re.compile(r'\bbundesgerichtsgesetz\b',                               re.I), "BGG"),
+    (re.compile(r'\bbundesverfassung\b',                                   re.I), "BV"),
+    (re.compile(r'\bdatenschutzgesetz\b',                                  re.I), "DSG"),
+    # Francese
+    (re.compile(r'\bcode\s+pénal\b',                                       re.I), "CP"),
+    (re.compile(r'\bcode\s+civil\b',                                       re.I), "CC"),
+    (re.compile(r'\bcode\s+des\s+obligations\b',                           re.I), "CO"),
+    (re.compile(r'\bcode\s+de\s+procédure\s+civile\b',                     re.I), "CPC"),
+    (re.compile(r'\bcode\s+de\s+procédure\s+pénale\b',                     re.I), "CPP"),
+    (re.compile(r'\bloi\s+sur\s+le\s+tribunal\s+fédéral\b',                re.I), "LTF"),
+    (re.compile(r'\bconstitution\s+fédérale\b',                            re.I), "Cst."),
+]
+
+# Normalizza varianti di "articolo/article/artikel/art" → "Art. NNN"
+# Cattura anche "art.111" (senza spazio) e "art 111" (senza punto)
+_QUERY_ART_RE = re.compile(
+    r'\b(articol[oi]|article|artikel|art)\.?\s*(\d+[a-z]?)',
+    re.IGNORECASE | re.UNICODE,
+)
+# Rimuove preposizioni residue: "Art. 111 del CP" → "Art. 111 CP"
+_QUERY_DEL_RE = re.compile(
+    r'(Art\.\s+\d+[a-z]?(?:\s+(?:cpv|abs|al|Abs)\.?\s*\d+)?)\s+'
+    r'(?:del|della|der|des|de\s+la|du|von|di)\s+',
+    re.IGNORECASE,
+)
+# Riordina "CODICE Art. NNN" → "Art. NNN CODICE" (es. "CO Art. 97" → "Art. 97 CO")
+_QUERY_CODE_BEFORE_ART_RE = re.compile(
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(Art\.\s+\d+[a-z]?)',
+    re.IGNORECASE,
+)
+# Mappa codici → forma canonica (gestisce maiuscole/minuscole)
+_CODE_CANON: dict[str, str] = {
+    "cp": "CP", "cc": "CC", "co": "CO", "cpc": "CPC", "cpp": "CPP",
+    "ltf": "LTF", "bgg": "BGG", "bv": "BV", "bg": "BG", "cst.": "Cst.",
+    "stgb": "StGB", "zgb": "ZGB", "or": "OR", "zpo": "ZPO",
+    "stpo": "StPO", "lpd": "LPD", "dsg": "DSG", "lef": "LEF",
+    "schkg": "SchKG", "dbg": "DBG", "lifd": "LIFD",
+}
+
+def pre_processa_query(query: str) -> str:
+    """
+    Normalizza i riferimenti agli articoli nella query PRIMA dell'ottimizzazione AI.
+
+    Esempi:
+      "articolo 111 del codice penale"  →  "Art. 111 CP"
+      "art 336 CO"                      →  "Art. 336 CO"
+      "art.53 cp"                       →  "Art. 53 CP"
+      "Artikel 111 StGB"                →  "Art. 111 StGB"
+      "article 41 du CO"                →  "Art. 41 CO"
+      "violazione CO art 97"            →  "violazione Art. 97 CO"
+    """
+    result = query
+    # 1. Nomi di legge estesi → abbreviazione
+    for pat, abbrev in _LAW_NAME_PATTERNS:
+        result = pat.sub(abbrev, result)
+    # 2. "articolo/article/artikel NNN" → "Art. NNN"
+    result = _QUERY_ART_RE.sub(lambda m: f"Art. {m.group(2)}", result)
+    # 3. Rimuove preposizioni tra numero articolo e codice
+    result = _QUERY_DEL_RE.sub(r'\1 ', result)
+    # 4. Riordina "CODICE Art. NNN" → "Art. NNN CODICE"
+    result = _QUERY_CODE_BEFORE_ART_RE.sub(lambda m: f"{m.group(2)} {m.group(1)}", result)
+    # 5. Porta i codici alla forma canonica (es. "stgb"→"StGB", "STPO"→"StPO")
+    result = re.sub(
+        r'\b(cp|cc|co|cpc|cpp|ltf|bgg|bv|stgb|zgb|or|zpo|stpo|lpd|dsg|lef|schkg|dbg|lifd)\b',
+        lambda m: _CODE_CANON.get(m.group(1).lower(), m.group(1).upper()),
+        result, flags=re.IGNORECASE,
+    )
+    return result.strip()
+
+
 # ── Query optimizer (GPT-4o-mini) ─────────────────────────────────────────────
 
 _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
@@ -206,30 +296,36 @@ Trasforma la query dell'utente in termini di ricerca ottimali per un motore full
 di sentenze federali svizzere (OpenCaseLaw).
 
 Regole:
-- Estrai 1–4 concetti giuridici chiave in forma di parole chiave (non frasi complete)
-- Mantieni i riferimenti agli articoli esattamente come scritti (es. "art. 53 CP", "art. 336 CO")
-- Se la query è già un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscilo com'è
-- Usa la lingua della query (it/de/fr) o termini giuridici standard
+- Se la query contiene riferimenti ad articoli (es. "Art. 111 CP", "Art. 336 CO"),
+  includili ESATTAMENTE nella query ottimizzata, senza modificarli né parafrasarli.
+  Il riferimento articolo deve apparire in primo piano.
+- Per query basate solo su articoli, restituisci il riferimento articolo com'è
+  (max 1–2 concetti aggiuntivi se utili).
+- Per query concettuali senza articoli, estrai 1–4 concetti giuridici chiave.
+- Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
+- Usa la lingua della query (it/de/fr) o termini giuridici standard svizzeri.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
 async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
+    # Pre-processa sempre la query: normalizza articoli e nomi di legge
+    query_norm = pre_processa_query(query)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{query}"'},
+                {"role": "user",   "content": f'Query: "{query_norm}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            return d.get("query_ottimizzata", query), d.get("spiegazione", "")
+            return d.get("query_ottimizzata", query_norm), d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
-    return query, "Query diretta"
+    return query_norm, "Query diretta"
 
 
 # ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
