@@ -355,8 +355,8 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
     "CPC":   ["ZPO"],           # Codice proc. civile = Zivilprozessordnung
     "CPP":   ["StPO"],          # Codice proc. penale = Strafprozessordnung
     "LTF":   ["BGG"],           # Legge Trib. federale = Bundesgerichtsgesetz
-    "Cost.": ["BV", "Cst."],    # Costituzione federale
-    "Cst.":  ["BV", "Cost."],
+    "Cost.": ["BV"],             # Costituzione federale IT → DE
+    "Cst.":  ["BV"],             # Costituzione federale FR → DE
     "LPD":   ["DSG"],           # Legge protezione dati = Datenschutzgesetz
     "LEF":   ["SchKG"],         # Legge esecuzione = Schuldbetreibungsgesetz
     # Tedesco → Italiano/Francese
@@ -366,7 +366,7 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
     "ZPO":   ["CPC"],
     "StPO":  ["CPP"],
     "BGG":   ["LTF"],
-    "BV":    ["Cost.", "Cst."],
+    "BV":    ["Cost."],          # Costituzione federale DE → IT
     "DSG":   ["LPD"],
     "SchKG": ["LEF"],
 }
