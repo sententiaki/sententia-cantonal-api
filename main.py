@@ -1056,25 +1056,38 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             hits = await _ocl_search(codice, 1, http)
             hit = hits[0] if hits else {}
         else:
-            # Cerca per codice su OCL — fetch più risultati e filtra per corrispondenza esatta
+            # Cerca per codice su OCL con più varianti di query e limite alto
             norm_input = _normalize_codice(codice)
-            hits = await _ocl_search(codice, 8, http)
-            exact = [h for h in hits
-                     if _normalize_codice(h.get("docket_number") or h.get("file_number") or "") == norm_input]
-            if not exact:
-                # Seconda chance: normalizza i separatori (es. 6B_51_2021 → cerca "6B 51 2021")
-                alt = re.sub(r'[/_\-]', ' ', codice).strip()
-                if alt != codice:
-                    hits2 = await _ocl_search(alt, 8, http)
-                    exact = [h for h in hits2
-                             if _normalize_codice(h.get("docket_number") or h.get("file_number") or "") == norm_input]
+
+            def _find_exact(hits: list[dict]) -> list[dict]:
+                return [h for h in hits
+                        if _normalize_codice(
+                            h.get("docket_number") or h.get("file_number") or ""
+                        ) == norm_input]
+
+            # Varianti di query da provare in sequenza
+            queries = [codice]
+            alt_sep = re.sub(r'[/_\-]', ' ', codice).strip()
+            if alt_sep != codice:
+                queries.append(alt_sep)
+            alt_bare = re.sub(r'[\s_\-/]', '', codice)
+            if alt_bare not in queries:
+                queries.append(alt_bare)
+
+            exact: list[dict] = []
+            for q in queries:
+                hits = await _ocl_search(q, 20, http)
+                exact = _find_exact(hits)
+                if exact:
+                    break
+
             if not exact:
                 return JSONResponse(
                     {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
                     status_code=404,
                 )
-            hit       = exact[0]
-            dec_id    = hit.get("decision_id", "")
+            hit    = exact[0]
+            dec_id = hit.get("decision_id", "")
             full_text = await _ocl_full_text(dec_id, http)
 
     if len(full_text) < 100:
