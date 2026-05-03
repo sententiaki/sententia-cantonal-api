@@ -1026,19 +1026,32 @@ _SINTESI_USER = {
     ),
 }
 
-async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
+async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONResponse:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
     lang = lang if lang in ("it", "de", "fr") else "it"
 
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
-        hits = await _ocl_search(codice, 1, http)
-        if not hits:
-            return JSONResponse({"errore": f"Sentenza non trovata: {codice}"}, status_code=404)
-        hit       = hits[0]
-        dec_id    = hit.get("decision_id", "")
-        full_text = await _ocl_full_text(dec_id, http)
+        hit: dict = {}
+        if decision_id:
+            # Percorso veloce: abbiamo già decision_id, recupera testo direttamente
+            full_text = await _ocl_full_text(decision_id, http)
+            # Cerca comunque i metadati (per tribunale, data, statutes)
+            hits = await _ocl_search(codice, 1, http)
+            hit = hits[0] if hits else {}
+        else:
+            # Cerca per codice su OCL — prova varianti per codici cantonali
+            hits = await _ocl_search(codice, 1, http)
+            if not hits:
+                # Alcuni codici cantonali potrebbero avere formati diversi; prova con meno termini
+                short = re.sub(r'[/_\-]', ' ', codice).strip()
+                hits = await _ocl_search(short, 1, http)
+            if not hits:
+                return JSONResponse({"errore": f"Sentenza non trovata: {codice}"}, status_code=404)
+            hit       = hits[0]
+            dec_id    = hit.get("decision_id", "")
+            full_text = await _ocl_full_text(dec_id, http)
 
     if len(full_text) < 100:
         return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
@@ -1064,23 +1077,27 @@ async def _sintesi_impl(codice: str, lang: str) -> JSONResponse:
         "tribunale":     normalizza_tribunale(court_raw),
         "lingua_orig":   hit.get("language", ""),
         "source":        "opencaselaw.ch",
+        "statutes":      hit.get("statutes") or [],
+        "decision_id":   hit.get("decision_id", decision_id),
     })
 
 @app.get("/sintesi_federal")
 async def sintesi_federal(
-    codice: str = Query(..., description="Codice sentenza (es. 6B_51/2021)"),
-    lang:   str = Query("it"),
+    codice:      str           = Query(..., description="Codice sentenza (es. 6B_51/2021)"),
+    lang:        str           = Query("it"),
+    decision_id: Optional[str] = Query(None),
 ):
-    """Riassunto AI strutturato di una sentenza federale specifica."""
-    return await _sintesi_impl(codice, lang)
+    """Riassunto AI strutturato di una sentenza. Accetta decision_id OCL per accesso diretto."""
+    return await _sintesi_impl(codice, lang, decision_id or "")
 
 @app.get("/sintesi")
 async def sintesi(
-    codice: str = Query(...),
-    lang:   str = Query("it"),
+    codice:      str           = Query(...),
+    lang:        str           = Query("it"),
+    decision_id: Optional[str] = Query(None),
 ):
     """Alias di /sintesi_federal (compatibilità con sententia-api-3.onrender.com)."""
-    return await _sintesi_impl(codice, lang)
+    return await _sintesi_impl(codice, lang, decision_id or "")
 
 
 # ── /articolo_fedlex ─────────────────────────────────────────────────────────
@@ -1124,6 +1141,35 @@ async def articolo_fedlex(
 
     text = (data.get("result", {}).get("content") or [{}])[0].get("text", "")
     return JSONResponse({"testo": text, "rs": rs, "art": art, "lang": lang})
+
+
+# ── /testo_decisione  (full text OCL via decision_id) ────────────────────────
+
+@app.get("/testo_decisione")
+async def testo_decisione(
+    decision_id: str = Query(..., description="OCL decision_id (es. bge_BGE_134_III_108)"),
+):
+    """Restituisce il testo completo di una sentenza OCL formattato come HTML leggibile."""
+    async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
+        testo = await _ocl_full_text(decision_id, http)
+    if not testo or len(testo) < 50:
+        return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
+
+    # Converti plain text in HTML strutturato
+    html_parts: list[str] = []
+    for block in testo.split('\n\n'):
+        block = block.strip()
+        if not block:
+            continue
+        lines = block.split('\n')
+        # Titoletto: riga singola corta senza punto finale → <h3>
+        if len(lines) == 1 and len(block) < 120 and not block.endswith('.'):
+            html_parts.append(f"<h3>{block}</h3>")
+        else:
+            inner = "<br>".join(line.strip() for line in lines if line.strip())
+            html_parts.append(f"<p>{inner}</p>")
+
+    return JSONResponse({"html": "\n".join(html_parts), "decision_id": decision_id})
 
 
 # ── /html_federale ────────────────────────────────────────────────────────────
