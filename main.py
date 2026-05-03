@@ -21,6 +21,7 @@ Avvio locale:
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 from typing import AsyncIterator, Optional
@@ -679,11 +680,23 @@ async def _elabora_risultato_ti(
 
 # ── OpenCaseLaw helpers ───────────────────────────────────────────────────────
 
-async def _ocl_search(query: str, limit: int, http: httpx.AsyncClient) -> list[dict]:
+# Mappa cantone → lingua per OCL (usata per pre-filtrare lato OCL)
+_CANTON_LANG: dict[str, str] = {
+    "ti": "it",
+    "ge": "fr", "vd": "fr",
+    "zh": "de", "be": "de",
+}
+
+async def _ocl_search(
+    query: str, limit: int, http: httpx.AsyncClient, language: str = ""
+) -> list[dict]:
+    params: dict = {"query": query, "limit": limit}
+    if language:
+        params["language"] = language
     try:
         r = await http.get(
             f"{OPENCASELAW_BASE}/decisions",
-            params={"query": query, "limit": limit},
+            params=params,
             timeout=15.0,
         )
         r.raise_for_status()
@@ -692,6 +705,16 @@ async def _ocl_search(query: str, limit: int, http: httpx.AsyncClient) -> list[d
     except Exception as exc:
         log.error("OCL search error: %s", exc)
         return []
+
+def _rerank(hits: list[dict]) -> list[dict]:
+    """Re-ordina i risultati OCL per: relevance_score × log(1 + citation_count).
+    Le sentenze molto citate (BGE) salgono rispetto a sentenze irrilevanti con
+    score simile ma zero citazioni."""
+    def _score(h: dict) -> float:
+        rel = float(h.get("relevance_score") or 0)
+        cit = int(h.get("citation_count") or 0)
+        return rel * math.log1p(cit + 1)
+    return sorted(hits, key=_score, reverse=True)
 
 async def _ocl_full_text(decision_id: str, http: httpx.AsyncClient) -> str:
     if not decision_id:
@@ -722,18 +745,20 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
     url_final = url_ocl if url_ocl.startswith("http") else costruisci_url_bger(docket)
     tipo = _rileva_tipo(court_raw)
     return {
-        "rank":         rank,
-        "codice":       docket,
-        "tribunale":    normalizza_tribunale(court_raw),
-        "tipo":         tipo,
-        "tribunal_key": _rileva_tribunal(court_raw),
-        "canton_key":   _rileva_cantone(court_raw),
-        "camera":       hit.get("division") or hit.get("department") or hit.get("chamber") or "",
-        "area":         rileva_area(docket),
-        "data":         data_fmt,
-        "anno":         anno,
-        "url":          url_final,
-        "decision_id":  hit.get("decision_id", ""),
+        "rank":           rank,
+        "codice":         docket,
+        "tribunale":      normalizza_tribunale(court_raw),
+        "tipo":           tipo,
+        "tribunal_key":   _rileva_tribunal(court_raw),
+        "canton_key":     _rileva_cantone(court_raw),
+        "camera":         hit.get("division") or hit.get("department") or hit.get("chamber") or "",
+        "area":           rileva_area(docket),
+        "data":           data_fmt,
+        "anno":           anno,
+        "url":            url_final,
+        "decision_id":    hit.get("decision_id", ""),
+        "citation_count": int(hit.get("citation_count") or 0),
+        "ocl_statutes":   hit.get("statutes") or [],
     }
 
 async def _elabora_risultato(
@@ -744,11 +769,14 @@ async def _elabora_risultato(
     meta   = _hit_to_meta(hit, rank)
     testo  = await _ocl_full_text(meta["decision_id"], http)
     riass  = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
-    # Estrai articoli dal testo completo prima (più affidabile), poi dal riassunto
-    art = estrai_articoli(testo) if testo else estrai_articoli(riass)
-    # Se dal testo non è uscito niente, prova anche sul riassunto
-    if not art and riass:
-        art = estrai_articoli(riass)
+    # Priorità articoli: campo statutes strutturato di OCL → testo completo → riassunto
+    ocl_statutes = meta.pop("ocl_statutes", [])
+    if ocl_statutes:
+        art = ocl_statutes
+    else:
+        art = estrai_articoli(testo) if testo else estrai_articoli(riass)
+        if not art and riass:
+            art = estrai_articoli(riass)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
@@ -783,7 +811,7 @@ async def cerca(
                 return (not anno_da or y >= int(anno_da)) and (not anno_a or y <= int(anno_a))
             hits = [h for h in hits if _ok(h)]
 
-        hits = hits[:limit]
+        hits = _rerank(hits)[:limit]
         if not hits:
             return JSONResponse({
                 "risultati": [], "query_originale": query,
@@ -855,7 +883,9 @@ async def cerca_stream(
                 # Se attivi filtri che restringono, prendiamo più risultati per compensare
                 needs_extra = bool(tipo_filter or area_filter or tribunal_filter or canton_filter)
                 fetch_limit = limit * 4 if needs_extra else limit * 2
-                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http)
+                # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
+                ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
+                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http, language=ocl_lang)
 
                 # Filtro anno
                 if anno_da or anno_a:
@@ -887,7 +917,8 @@ async def cerca_stream(
                 if canton_filter:
                     hits = [h for h in hits if _rileva_cantone(_court(h)) == canton_filter]
 
-                hits = hits[:limit]
+                # Re-rank: relevance_score × log(1 + citation_count) — BGE citate salgono
+                hits = _rerank(hits)[:limit]
 
                 if not hits:
                     if canton_filter:
