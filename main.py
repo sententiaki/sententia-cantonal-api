@@ -189,6 +189,11 @@ def formatta_data(raw: str) -> str:
     m = re.match(r'(\d{4})-(\d{2})-(\d{2})', raw or "")
     return f"{m.group(3)}.{m.group(2)}.{m.group(1)}" if m else (raw or "")
 
+def _normalize_codice(c: str) -> str:
+    """Normalizza un numero di ruolo per confronto esatto case-insensitive e separator-agnostico.
+    Es. '6B_51/2021', '6b 51/2021', '6B-51/2021' → '6b512021'."""
+    return re.sub(r'[\s_\-./]', '', c).lower()
+
 def costruisci_url_bger(codice: str) -> str:
     c = codice.strip()
     c = re.sub(r'^BGE\s+', '', c, flags=re.IGNORECASE)
@@ -1046,15 +1051,24 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             hits = await _ocl_search(codice, 1, http)
             hit = hits[0] if hits else {}
         else:
-            # Cerca per codice su OCL — prova varianti per codici cantonali
-            hits = await _ocl_search(codice, 1, http)
-            if not hits:
-                # Alcuni codici cantonali potrebbero avere formati diversi; prova con meno termini
-                short = re.sub(r'[/_\-]', ' ', codice).strip()
-                hits = await _ocl_search(short, 1, http)
-            if not hits:
-                return JSONResponse({"errore": f"Sentenza non trovata: {codice}"}, status_code=404)
-            hit       = hits[0]
+            # Cerca per codice su OCL — fetch più risultati e filtra per corrispondenza esatta
+            norm_input = _normalize_codice(codice)
+            hits = await _ocl_search(codice, 8, http)
+            exact = [h for h in hits
+                     if _normalize_codice(h.get("docket_number") or h.get("file_number") or "") == norm_input]
+            if not exact:
+                # Seconda chance: normalizza i separatori (es. 6B_51_2021 → cerca "6B 51 2021")
+                alt = re.sub(r'[/_\-]', ' ', codice).strip()
+                if alt != codice:
+                    hits2 = await _ocl_search(alt, 8, http)
+                    exact = [h for h in hits2
+                             if _normalize_codice(h.get("docket_number") or h.get("file_number") or "") == norm_input]
+            if not exact:
+                return JSONResponse(
+                    {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
+                    status_code=404,
+                )
+            hit       = exact[0]
             dec_id    = hit.get("decision_id", "")
             full_text = await _ocl_full_text(dec_id, http)
 
