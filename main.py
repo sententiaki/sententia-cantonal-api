@@ -191,7 +191,12 @@ def formatta_data(raw: str) -> str:
 
 def _normalize_codice(c: str) -> str:
     """Normalizza un numero di ruolo per confronto esatto case-insensitive e separator-agnostico.
-    Es. '6B_51/2021', '6b 51/2021', '6B-51/2021' → '6b512021'."""
+    Es. '6B_51/2021', '6b 51/2021', '6B-51/2021' → '6b512021'.
+    Gestisce anche il prefisso BGE/ATF/BGer che OCL aggiunge ai codici storici:
+    'BGE 105 II 16' e '105 II 16' → entrambi '105ii16'."""
+    c = c.strip()
+    # Rimuovi prefisso BGE / ATF / BGer / RDAF ecc.
+    c = re.sub(r'^(?:bge|atf|bger|rdaf|rkge)\s+', '', c, flags=re.IGNORECASE)
     return re.sub(r'[\s_\-./]', '', c).lower()
 
 def costruisci_url_bger(codice: str) -> str:
