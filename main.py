@@ -688,11 +688,14 @@ _CANTON_LANG: dict[str, str] = {
 }
 
 async def _ocl_search(
-    query: str, limit: int, http: httpx.AsyncClient, language: str = ""
+    query: str, limit: int, http: httpx.AsyncClient,
+    language: str = "", offset: int = 0,
 ) -> list[dict]:
     params: dict = {"query": query, "limit": limit}
     if language:
         params["language"] = language
+    if offset:
+        params["offset"] = offset
     try:
         r = await http.get(
             f"{OPENCASELAW_BASE}/decisions",
@@ -849,6 +852,7 @@ async def cerca_stream(
     tribunal: Optional[str] = Query(None),   # bger | bvger | bstger
     canton:   Optional[str] = Query(None),   # ti | zh | be | ge | vd
     chamber:  Optional[str] = Query(None),   # nome sezione (filtro frontend)
+    offset:   int           = Query(0, ge=0),# paginazione OCL
 ):
     """
     Ricerca via SSE con supporto filtri area e tipo tribunale.
@@ -885,7 +889,8 @@ async def cerca_stream(
                 fetch_limit = limit * 4 if needs_extra else limit * 2
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
-                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http, language=ocl_lang)
+                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
+                                         language=ocl_lang, offset=offset)
 
                 # Filtro anno
                 if anno_da or anno_a:
