@@ -1105,47 +1105,59 @@ async def sintesi(
     return await _sintesi_impl(codice, lang, decision_id or "")
 
 
-# ── /articolo_fedlex ─────────────────────────────────────────────────────────
+# ── /articolo_ocl  (testo articolo via OCL /laws — sostituisce fedlex-connector) ──
+
+@app.get("/articolo_ocl")
+async def articolo_ocl(
+    sigla: str = Query(..., description="Abbreviazione legge (es. OR, SVG, LPP)"),
+    art:   str = Query(..., description="Numero articolo (es. 41, 16a)"),
+    lang:  str = Query("it"),
+):
+    """
+    Testo di un articolo di legge federale svizzera via OpenCaseLaw /laws.
+    Accetta qualsiasi sigla nelle tre lingue nazionali (OR/CO/CO, SVG/LCR/LCStr, ecc.)
+    senza bisogno di una mappa RS statica.
+    """
+    lang = lang if lang in ("it", "de", "fr") else "it"
+    async with httpx.AsyncClient(timeout=12.0) as client:
+        try:
+            r = await client.get(
+                f"{OPENCASELAW_BASE}/laws/{sigla}",
+                params={"article": art, "language": lang},
+            )
+            r.raise_for_status()
+            d = r.json()
+        except Exception as exc:
+            return JSONResponse({"errore": f"OCL laws error: {exc}"}, status_code=502)
+
+    articles = d.get("articles") or []
+    if not articles:
+        return JSONResponse({"errore": "Articolo non trovato."}, status_code=404)
+
+    testo = articles[0].get("text") or ""
+    if not testo:
+        return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
+
+    return JSONResponse({
+        "testo":              testo,
+        "sigla":              sigla,
+        "art":                art,
+        "sr_number":          d.get("sr_number", ""),
+        "consolidation_date": d.get("consolidation_date", ""),
+        "lang":               lang,
+    })
+
+
+# ── /articolo_fedlex  (mantenuto per compatibilità, ora delega a /articolo_ocl) ─
 
 @app.get("/articolo_fedlex")
 async def articolo_fedlex(
-    rs:   str = Query(..., description="Numero RS (es. 311.0)"),
+    rs:   str = Query(..., description="Numero RS (es. 311.0) — ora ignorato, usa /articolo_ocl"),
     art:  str = Query(..., description="Numero articolo (es. 53)"),
     lang: str = Query("it"),
 ):
-    """Testo di un articolo di legge federale via fedlex-connector.ch."""
-    lang = lang if lang in ("it", "de", "fr") else "it"
-    payload = {
-        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {
-            "name": "get_article",
-            "arguments": {"rs_number": rs, "article": art, "language": lang},
-        },
-    }
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        try:
-            resp = await client.post(
-                "https://mcp.fedlex-connector.ch/",
-                json=payload,
-                headers={"Accept": "application/json, text/event-stream"},
-            )
-        except Exception as exc:
-            return JSONResponse({"errore": f"Fedlex proxy error: {exc}"}, status_code=502)
-
-    m = re.search(r'^data:\s*(.+)$', resp.text, re.MULTILINE)
-    if not m:
-        return JSONResponse({"errore": "Risposta non valida da fedlex-connector.ch"}, status_code=502)
-    try:
-        data = json.loads(m.group(1))
-    except Exception:
-        return JSONResponse({"errore": "JSON non valido"}, status_code=502)
-
-    if data.get("result", {}).get("isError"):
-        msg = (data["result"].get("content") or [{}])[0].get("text", "Errore sconosciuto")
-        return JSONResponse({"errore": msg}, status_code=404)
-
-    text = (data.get("result", {}).get("content") or [{}])[0].get("text", "")
-    return JSONResponse({"testo": text, "rs": rs, "art": art, "lang": lang})
+    """Alias di compatibilità: usa /articolo_ocl con SR number come sigla."""
+    return await articolo_ocl(sigla=rs, art=art, lang=lang)
 
 
 # ── /testo_decisione  (full text OCL via decision_id) ────────────────────────
