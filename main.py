@@ -1075,13 +1075,13 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     if len(full_text) < 100:
         return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
 
-    ai = AsyncOpenAI(api_key=api_key)
+    ai = AsyncOpenAI(api_key=api_key, timeout=90.0)
     try:
         msg = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=1400,
             messages=[
                 {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
-                {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:12000])},
+                {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:8000])},
             ],
         )
         sintesi = msg.choices[0].message.content
