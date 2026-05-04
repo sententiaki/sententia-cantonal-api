@@ -192,19 +192,20 @@ def formatta_data(raw: str) -> str:
 def _normalize_codice(c: str) -> str:
     """Normalizza un numero di ruolo per confronto esatto case-insensitive e separator-agnostico.
     Es. '6B_51/2021', '6b 51/2021', '6B-51/2021' → '6b512021'.
-    Gestisce anche il prefisso BGE/ATF/BGer che OCL aggiunge ai codici storici:
-    'BGE 105 II 16' e '105 II 16' → entrambi '105ii16'."""
+    Gestisce prefissi tribunale (BGE, ATF, BGer, BVGer, BStGer, BPatGer) separati da spazio o _:
+    'BGE 105 II 16', 'BGE_134_III_67', 'BVGer F-2684/2026' → normalizzati senza prefisso."""
     c = c.strip()
-    # Rimuovi prefisso BGE / ATF / BGer / RDAF ecc.
-    c = re.sub(r'^(?:bge|atf|bger|rdaf|rkge)\s+', '', c, flags=re.IGNORECASE)
+    # Rimuovi prefisso tribunale seguito da spazio OPPURE underscore
+    c = re.sub(r'^(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+', '', c, flags=re.IGNORECASE)
     return re.sub(r'[\s_\-./]', '', c).lower()
 
 def costruisci_url_bger(codice: str) -> str:
     c = codice.strip()
-    # Rimuovi prefisso BGE / ATF / BGer / RDAF ecc. (stesso set di _normalize_codice)
-    c = re.sub(r'^(?:bge|atf|bger|rdaf|rkge)\s+', '', c, flags=re.IGNORECASE)
-    # Sostituisce spazi e / con - (mantiene _ che fa parte del codice ufficiale)
-    c = re.sub(r'[\s/]', '-', c)
+    # Rimuovi prefisso BGE/ATF/BGer ecc. seguito da spazio OPPURE underscore
+    # (es. 'BGE 134 III 67', 'BGE_134_III_67', 'ATF_105_II_16' → tutti corretti)
+    c = re.sub(r'^(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+', '', c, flags=re.IGNORECASE)
+    # Sostituisce tutti i separatori (spazi, _, /) con - per il formato URL di bger.li
+    c = re.sub(r'[\s_/]', '-', c)
     return f"https://bger.li/{c}"
 
 def sse(data: dict) -> str:
@@ -1098,13 +1099,22 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
                             h.get("docket_number") or h.get("file_number") or ""
                         ) == norm_input]
 
-            # Prova tre varianti di query per massimizzare la copertura OCL:
-            # originale, separatori → spazio, senza separatori
-            queries = [codice]
+            # Prova varianti di query per massimizzare la copertura OCL:
+            # 1. codice senza prefisso tribunale (es. 'BVGer F-2684/2026' → 'F-2684/2026')
+            #    → messo PRIMO perché più preciso per OCL
+            # 2. originale
+            # 3. separatori → spazio
+            bare_codice = re.sub(
+                r'^(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+', '',
+                codice, flags=re.IGNORECASE,
+            ).strip()
+            queries = [bare_codice] if bare_codice != codice else [codice]
+            if codice not in queries:
+                queries.append(codice)
             alt_sep = re.sub(r'[/_\-]', ' ', codice).strip()
-            if alt_sep != codice:
+            if alt_sep not in queries:
                 queries.append(alt_sep)
-            alt_bare = re.sub(r'[\s_\-/]', '', codice)
+            alt_bare = re.sub(r'[\s_\-/]', '', bare_codice)
             if alt_bare not in queries:
                 queries.append(alt_bare)
 
