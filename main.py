@@ -201,7 +201,9 @@ def _normalize_codice(c: str) -> str:
 
 def costruisci_url_bger(codice: str) -> str:
     c = codice.strip()
-    c = re.sub(r'^BGE\s+', '', c, flags=re.IGNORECASE)
+    # Rimuovi prefisso BGE / ATF / BGer / RDAF ecc. (stesso set di _normalize_codice)
+    c = re.sub(r'^(?:bge|atf|bger|rdaf|rkge)\s+', '', c, flags=re.IGNORECASE)
+    # Sostituisce spazi e / con - (mantiene _ che fa parte del codice ufficiale)
     c = re.sub(r'[\s/]', '-', c)
     return f"https://bger.li/{c}"
 
@@ -1041,22 +1043,53 @@ _SINTESI_USER = {
     ),
 }
 
+async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
+    """Scarica il testo grezzo di una sentenza da bger.li.
+    Ritorna stringa vuota se URL non trovato (404) o errore di rete."""
+    try:
+        resp = await http.get(url, timeout=25.0)
+        if resp.status_code in (404, 410):
+            return ""
+        resp.raise_for_status()
+    except httpx.HTTPStatusError:
+        return ""
+    except Exception as exc:
+        log.warning("bger.li fetch error (%s): %s", url, exc)
+        return ""
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    for tag in soup.find_all(["nav", "header", "footer", "script", "style",
+                              "form", "noscript", "iframe", "aside"]):
+        tag.decompose()
+    content = (
+        soup.find("div", id=re.compile(r"content|main|document|decision", re.I))
+        or soup.find("article")
+        or soup.find("main")
+        or soup.find("body")
+    )
+    text = (content or soup).get_text(" ", strip=True)
+    return text[:8000] if len(text) >= 100 else ""
+
+
 async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONResponse:
     api_key = os.environ.get("OPENAI_API_KEY", "")
     if not api_key:
         return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
     lang = lang if lang in ("it", "de", "fr") else "it"
 
+    source = "opencaselaw.ch"
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
         hit: dict = {}
+        full_text = ""
+
         if decision_id:
             # Percorso veloce: abbiamo già decision_id, recupera testo direttamente
             full_text = await _ocl_full_text(decision_id, http)
             # Cerca comunque i metadati (per tribunale, data, statutes)
-            hits = await _ocl_search(codice, 1, http)
-            hit = hits[0] if hits else {}
+            hits_meta = await _ocl_search(codice, 1, http)
+            hit = hits_meta[0] if hits_meta else {}
         else:
-            # Cerca per codice su OCL con più varianti di query e limite alto
+            # ── 1. OCL: ricerca semantica con match esatto sul docket_number ──
             norm_input = _normalize_codice(codice)
 
             def _find_exact(hits: list[dict]) -> list[dict]:
@@ -1065,7 +1098,8 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
                             h.get("docket_number") or h.get("file_number") or ""
                         ) == norm_input]
 
-            # Varianti di query da provare in sequenza
+            # Prova tre varianti di query per massimizzare la copertura OCL:
+            # originale, separatori → spazio, senza separatori
             queries = [codice]
             alt_sep = re.sub(r'[/_\-]', ' ', codice).strip()
             if alt_sep != codice:
@@ -1076,19 +1110,30 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
 
             exact: list[dict] = []
             for q in queries:
-                hits = await _ocl_search(q, 20, http)
-                exact = _find_exact(hits)
+                hits_q = await _ocl_search(q, 20, http)
+                exact = _find_exact(hits_q)
                 if exact:
                     break
 
-            if not exact:
-                return JSONResponse(
-                    {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
-                    status_code=404,
-                )
-            hit    = exact[0]
-            dec_id = hit.get("decision_id", "")
-            full_text = await _ocl_full_text(dec_id, http)
+            if exact:
+                # Match esatto trovato su OCL
+                hit = exact[0]
+                full_text = await _ocl_full_text(hit.get("decision_id", ""), http)
+            else:
+                # ── 2. Fallback bger.li: fetch diretto per URL costruita dal codice ──
+                # OCL è ricerca semantica e non garantisce di restituire la decisione
+                # esatta — bger.li permette accesso diretto via codice.
+                bger_url = costruisci_url_bger(codice)
+                full_text = await _fetch_bger_text(bger_url, http)
+                if full_text:
+                    hit = {"docket_number": codice, "court_name": "BGer", "decision_date": ""}
+                    source = "bger.li"
+                    log.info("bger.li fallback for '%s': %s", codice, bger_url)
+                else:
+                    return JSONResponse(
+                        {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
+                        status_code=404,
+                    )
 
     if len(full_text) < 100:
         return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
@@ -1113,7 +1158,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         "codice":        hit.get("docket_number", codice),
         "tribunale":     normalizza_tribunale(court_raw),
         "lingua_orig":   hit.get("language", ""),
-        "source":        "opencaselaw.ch",
+        "source":        source,
         "statutes":      hit.get("statutes") or [],
         "decision_id":   hit.get("decision_id", decision_id),
     })
