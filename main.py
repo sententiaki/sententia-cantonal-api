@@ -1094,6 +1094,31 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
     lang = lang if lang in ("it", "de", "fr") else "it"
 
+    # ── Validazione formato codice sentenza ──────────────────────────────────
+    # Rifiuta immediatamente parole chiave, articoli di legge, ecc.
+    # Formati validi: 6B_302/2023 | F-2684/2026 | 143 II 268 | BGE_134_III_67
+    _DOCKET_RE = re.compile(
+        r"""
+        (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?   # prefisso opzionale
+        (?:
+            [1-9][A-Z]{0,3}_\d+/\d{4}           # 6B_302/2023
+          | [A-Z]{1,3}[-_]\d+[/_-]\d{2,4}        # F-2684/2026 / SK.2023.1
+          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+       # 143 II 268 / 134_III_67
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    if not _DOCKET_RE.search(codice.strip()):
+        _invalid_msg = {
+            "it": (f"'{codice}' non è un codice sentenza. Inserisci un numero di ruolo "
+                   f"come 6B_302/2023 o BGE 143 II 268. Per cercare per tema usa Smart Search."),
+            "de": (f"'{codice}' ist keine Urteilsnummer. Gib eine Dossiernummer ein wie "
+                   f"6B_302/2023 oder BGE 143 II 268. Für die thematische Suche verwende Smart Search."),
+            "fr": (f"'{codice}' n'est pas un numéro d'arrêt. Entrez un numéro de dossier "
+                   f"comme 6B_302/2023 ou BGE 143 II 268. Pour rechercher par thème, utilisez Smart Search."),
+        }
+        return JSONResponse({"errore": _invalid_msg[lang]}, status_code=400)
+
     source = "opencaselaw.ch"
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
         hit: dict = {}
