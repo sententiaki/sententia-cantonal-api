@@ -1044,14 +1044,30 @@ _SINTESI_USER = {
     ),
 }
 
+_VALID_BGER_DOMAINS = {
+    "bger.ch", "www.bger.ch",
+    "entscheidsuche.ch", "www.entscheidsuche.ch",
+    "relevancy.ch", "www.relevancy.ch",
+}
+
 async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
     """Scarica il testo grezzo di una sentenza da bger.li.
-    Ritorna stringa vuota se URL non trovato (404) o errore di rete."""
+    Ritorna stringa vuota se URL non trovato, redirect loop, o dominio finale non valido."""
     try:
-        resp = await http.get(url, timeout=25.0)
+        # Limite redirect esplicito: evita loop infiniti su codici non validi
+        resp = await http.get(url, timeout=25.0, follow_redirects=True,
+                              max_redirects=5)
         if resp.status_code in (404, 410):
             return ""
         resp.raise_for_status()
+        # Verifica che il redirect finale porti a un dominio svizzero noto
+        final_host = str(resp.url.host).lower()
+        if final_host not in _VALID_BGER_DOMAINS:
+            log.warning("bger.li redirect to unexpected domain '%s' for %s", final_host, url)
+            return ""
+    except httpx.TooManyRedirects:
+        log.warning("bger.li redirect loop (%s): codice non valido o non trovato", url)
+        return ""
     except httpx.HTTPStatusError:
         return ""
     except Exception as exc:
