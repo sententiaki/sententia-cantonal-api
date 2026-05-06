@@ -1104,6 +1104,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             [1-9][A-Z]{0,3}_\d+/\d{4}           # 6B_302/2023
           | [A-Z]{1,3}[-_]\d+[/_-]\d{2,4}        # F-2684/2026 / SK.2023.1
           | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+       # 143 II 268 / 134_III_67
+          | \d{1,4}\.\d{4}\.\d+                  # 52.2015.575 / 42.2025.11 (cantonal)
         )
         """,
         re.IGNORECASE | re.VERBOSE,
