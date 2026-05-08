@@ -800,7 +800,7 @@ async def _elabora_risultato(
 
 @app.get("/cerca")
 async def cerca(
-    query:   str           = Query(..., min_length=1),
+    query:   str           = Query(..., min_length=1, max_length=400),
     lang:    str           = Query("it"),
     limit:   int           = Query(8, ge=1, le=20),
     anno_da: Optional[str] = Query(None),
@@ -855,7 +855,7 @@ async def cerca(
 
 @app.get("/cerca_stream")
 async def cerca_stream(
-    query:    str           = Query(..., min_length=1),
+    query:    str           = Query(..., min_length=1, max_length=400),
     lang:     str           = Query("it"),
     limit:    int           = Query(8, ge=1, le=20),
     anno_da:  Optional[str] = Query(None),
@@ -1222,7 +1222,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
 
 @app.get("/sintesi_federal")
 async def sintesi_federal(
-    codice:      str           = Query(..., description="Codice sentenza (es. 6B_51/2021)"),
+    codice:      str           = Query(..., min_length=1, max_length=80, description="Codice sentenza (es. 6B_51/2021)"),
     lang:        str           = Query("it"),
     decision_id: Optional[str] = Query(None),
 ):
@@ -1231,7 +1231,7 @@ async def sintesi_federal(
 
 @app.get("/sintesi")
 async def sintesi(
-    codice:      str           = Query(...),
+    codice:      str           = Query(..., min_length=1, max_length=80),
     lang:        str           = Query("it"),
     decision_id: Optional[str] = Query(None),
 ):
