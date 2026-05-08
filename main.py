@@ -719,7 +719,7 @@ async def _ocl_search(
         d = r.json()
         return d.get("results", d if isinstance(d, list) else [])
     except Exception as exc:
-        log.error("OCL search error: %s", exc)
+        log.error("OCL search error: %s", repr(exc))
         return []
 
 def _rerank(hits: list[dict]) -> list[dict]:
@@ -1054,9 +1054,13 @@ async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
     """Scarica il testo grezzo di una sentenza da bger.li.
     Ritorna stringa vuota se URL non trovato, redirect loop, o dominio finale non valido."""
     try:
-        # Limite redirect esplicito: evita loop infiniti su codici non validi
-        resp = await http.get(url, timeout=25.0, follow_redirects=True,
-                              max_redirects=5)
+        # Client dedicato con limite redirect: max_redirects è parametro del client, non di .get()
+        async with httpx.AsyncClient(
+            headers=HTTP_HEADERS,
+            follow_redirects=True,
+            max_redirects=5,
+        ) as bger_client:
+            resp = await bger_client.get(url, timeout=25.0)
         if resp.status_code in (404, 410):
             return ""
         resp.raise_for_status()
@@ -1071,7 +1075,7 @@ async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
     except httpx.HTTPStatusError:
         return ""
     except Exception as exc:
-        log.warning("bger.li fetch error (%s): %s", url, exc)
+        log.warning("bger.li fetch error (%s): %s", url, repr(exc))
         return ""
 
     soup = BeautifulSoup(resp.text, "html.parser")
