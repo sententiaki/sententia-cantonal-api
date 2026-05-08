@@ -1045,6 +1045,7 @@ _SINTESI_USER = {
 }
 
 _VALID_BGER_DOMAINS = {
+    "bger.li", "www.bger.li",
     "bger.ch", "www.bger.ch",
     "entscheidsuche.ch", "www.entscheidsuche.ch",
     "relevancy.ch", "www.relevancy.ch",
