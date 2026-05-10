@@ -1036,12 +1036,8 @@ async def cerca_stream(
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # OCL primario — entscheidsuche fallback se OCL non risponde o zero risultati
                 hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
                                          language=ocl_lang, offset=offset)
-                if not hits:
-                    log.info("OCL returned 0 results, trying entscheidsuche fallback")
-                    hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
 
                 # Filtro anno
                 if anno_da or anno_a:
