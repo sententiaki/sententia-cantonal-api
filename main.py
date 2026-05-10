@@ -47,7 +47,8 @@ app.add_middleware(
 )
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-OPENCASELAW_BASE = "https://mcp.opencaselaw.ch/api"
+OPENCASELAW_BASE    = "https://mcp.opencaselaw.ch/api"
+ENTSCHEIDSUCHE_BASE = "https://entscheidsuche.ch/_search.php"
 
 HTTP_HEADERS = {
     "User-Agent": (
@@ -746,6 +747,113 @@ async def _ocl_search(
             return []
     return []
 
+# ── Entscheidsuche (secondario) ──────────────────────────────────────────────
+
+def _es_normalize(hit: dict) -> dict:
+    """Converte un risultato entscheidsuche.ch al formato compatibile con _hit_to_meta."""
+    src       = hit.get("_source", {})
+    doc_id    = hit.get("_id", "")
+    hierarchy = src.get("hierarchy", [])
+    court_key = hierarchy[0].upper() if hierarchy else ""
+
+    # Mappa gerarchia → nome tribunale leggibile
+    _ES_COURT = {
+        "BGER": "Tribunale federale", "BGE": "Tribunale federale",
+        "BVGER": "Tribunale amministrativo federale",
+        "BSTGER": "Tribunale penale federale",
+        "BPATGER": "Tribunale federale dei brevetti",
+        "AG": "Aargau", "BE": "Berna", "BL": "Basilea Campagna",
+        "BS": "Basilea Città", "FR": "Friburgo", "GE": "Ginevra",
+        "GL": "Glarona", "GR": "Grigioni", "JU": "Giura",
+        "LU": "Lucerna", "NE": "Neuchâtel", "NW": "Nidvaldo",
+        "OW": "Obvaldo", "SG": "San Gallo", "SH": "Sciaffusa",
+        "SO": "Soletta", "SZ": "Svitto", "TG": "Turgovia",
+        "TI": "Ticino", "UR": "Uri", "VD": "Vaud",
+        "VS": "Vallese", "ZG": "Zugo", "ZH": "Zurigo",
+    }
+    court_name = _ES_COURT.get(court_key, court_key)
+
+    # Docket: estrai dal titolo o dall'_id
+    title_it = (src.get("title") or {}).get("it", "")
+    title_de = (src.get("title") or {}).get("de", "")
+    title    = title_it or title_de or ""
+    # Cerca "BGE NNN [IVX]+ NNN" nel titolo
+    m_bge = re.search(r'BGE\s+(\d+\s+[IVX]+\s+\d+)', title, re.I)
+    # Cerca codice tipo "6B_302/2023" nell'_id o nel titolo
+    m_dkt = re.search(r'\b([1-9][A-Z]{0,3}[_/]\d+[/_]\d{4})\b', doc_id + " " + title)
+    if m_bge:
+        docket = "BGE " + m_bge.group(1)
+    elif m_dkt:
+        docket = m_dkt.group(1).replace("_", "/")
+    else:
+        # Fallback: usa _id pulito
+        docket = doc_id.replace("_", " ").strip()[:60]
+
+    attachment = src.get("attachment") or {}
+    url        = attachment.get("content_url", "")
+    full_text  = (attachment.get("content") or "").strip()
+    abstract   = ((src.get("abstract") or {}).get("it")
+               or (src.get("abstract") or {}).get("de")
+               or (src.get("abstract") or {}).get("fr") or "")
+
+    return {
+        "docket_number":  docket,
+        "decision_date":  src.get("date", ""),
+        "court_name":     court_name,
+        "url":            url,
+        "relevance_score": min(float(hit.get("_score") or 0) / 100.0, 1.0),
+        "citation_count": 0,
+        "decision_id":    "",
+        "_es_text":       (full_text or abstract)[:50_000],
+        "_es_id":         doc_id,
+    }
+
+
+async def _entscheidsuche_search(
+    query: str, limit: int, http: httpx.AsyncClient
+) -> list[dict]:
+    """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
+    payload = {
+        "query": {
+            "simple_query_string": {
+                "query": query,
+                "default_operator": "and",
+            }
+        },
+        "size": limit,
+        "sort": [{"_score": {"order": "desc"}}],
+    }
+    try:
+        r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
+        r.raise_for_status()
+        hits = r.json().get("hits", {}).get("hits", [])
+        return [_es_normalize(h) for h in hits]
+    except Exception as exc:
+        log.warning("Entscheidsuche search error: %s", repr(exc))
+        return []
+
+
+def _merge_hits(ocl: list[dict], es: list[dict]) -> list[dict]:
+    """Unisce OCL (primario) + entscheidsuche (secondario), deduplicando per docket."""
+    seen: set[str] = set()
+    merged: list[dict] = []
+    for h in ocl:
+        key = (h.get("docket_number") or h.get("file_number") or "").lower().strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(h)
+    for h in es:
+        key = (h.get("docket_number") or "").lower().strip()
+        if key and key in seen:
+            continue
+        if key:
+            seen.add(key)
+        merged.append(h)
+    return merged
+
+
 def _rerank(hits: list[dict]) -> list[dict]:
     """Re-ordina i risultati OCL per: relevance_score × log(1 + citation_count).
     Le sentenze molto citate (BGE) salgono rispetto a sentenze irrilevanti con
@@ -806,9 +914,10 @@ async def _elabora_risultato(
     ai: Optional[AsyncOpenAI], http: httpx.AsyncClient,
 ) -> dict:
     """Scarica il testo completo e genera il riassunto per un singolo risultato."""
-    meta   = _hit_to_meta(hit, rank)
-    testo  = await _ocl_full_text(meta["decision_id"], http)
-    riass  = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
+    meta  = _hit_to_meta(hit, rank)
+    # Se il testo è già incluso (entscheidsuche), non serve un secondo fetch
+    testo = hit.get("_es_text") or await _ocl_full_text(meta["decision_id"], http)
+    riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
     # Priorità articoli: campo statutes strutturato di OCL → testo completo → riassunto
     ocl_statutes = meta.pop("ocl_statutes", [])
     if ocl_statutes:
@@ -926,8 +1035,15 @@ async def cerca_stream(
                 fetch_limit = limit * 4 if needs_extra else limit * 2
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
-                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
-                                         language=ocl_lang, offset=offset)
+
+                # OCL (primario, semantico) + entscheidsuche (secondario, full-text) in parallelo
+                ocl_hits, es_hits = await asyncio.gather(
+                    _ocl_search(query_opt, min(fetch_limit, 40), http,
+                                language=ocl_lang, offset=offset),
+                    _entscheidsuche_search(query_opt, min(fetch_limit // 2, 20), http),
+                )
+                hits = _merge_hits(ocl_hits, es_hits)
+                log.info("Search merge: OCL=%d ES=%d merged=%d", len(ocl_hits), len(es_hits), len(hits))
 
                 # Filtro anno
                 if anno_da or anno_a:
