@@ -1036,8 +1036,15 @@ async def cerca_stream(
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
+                # OCL primario — entscheidsuche fallback (solo federale) se OCL torna vuoto
                 hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
                                          language=ocl_lang, offset=offset)
+                if not hits:
+                    log.info("OCL returned 0, using entscheidsuche fallback (federal only)")
+                    es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
+                    _ES_FEDERAL = {"BGER", "BGE", "BVGER", "BSTGER", "BPATGER"}
+                    hits = [h for h in es_hits
+                            if (h.get("_es_id") or "").split("_")[0].upper() in _ES_FEDERAL]
 
                 # Filtro anno
                 if anno_da or anno_a:
