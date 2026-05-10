@@ -266,10 +266,12 @@ _QUERY_CODE_BEFORE_ART_RE = re.compile(
 # Mappa codici → forma canonica (gestisce maiuscole/minuscole)
 _CODE_CANON: dict[str, str] = {
     "cp": "CP", "cc": "CC", "co": "CO", "cpc": "CPC", "cpp": "CPP",
-    "ltf": "LTF", "bgg": "BGG", "bv": "BV", "bg": "BG", "cst.": "Cst.",
+    "ltf": "LTF", "bgg": "BGG", "bv": "BV", "bg": "BG",
+    "cost.": "Cost.", "cst.": "Cst.",
     "stgb": "StGB", "zgb": "ZGB", "or": "OR", "zpo": "ZPO",
-    "stpo": "StPO", "lpd": "LPD", "dsg": "DSG", "lef": "LEF",
-    "schkg": "SchKG", "dbg": "DBG", "lifd": "LIFD",
+    "stpo": "StPO", "lpd": "LPD", "dsg": "DSG",
+    "lef": "LEF", "lp": "LP", "schkg": "SchKG",
+    "dbg": "DBG", "lifd": "LIFD",
 }
 
 # Normalizza "capoverso N" / "Absatz N" / "alinéa N" → forma standard con punto
@@ -287,12 +289,12 @@ _BARE_NUM_CODE_RE = re.compile(
     r'(?<!\w)'
     r'(\d+[a-z]?)'
     r'(\s+(?:cpv\.?|Abs\.?|al\.?)\s*\d+)?'
-    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\b',
+    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
     re.UNICODE | re.IGNORECASE,
 )
 # "CODE N" senza prefisso Art.  (es. "OR 50", "StGB 111", "or 50")
 _CODE_BARE_NUM_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(\d+[a-z]?)\b',
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]?)\b',
     re.UNICODE | re.IGNORECASE,
 )
 
@@ -324,7 +326,7 @@ def pre_processa_query(query: str) -> str:
     def _canon(m: re.Match) -> str:
         return _CODE_CANON.get(m.group(1).lower(), m.group(1).upper())
     result = re.sub(
-        r'\b(cp|cc|co|cpc|cpp|ltf|bgg|bv|stgb|zgb|or|zpo|stpo|lpd|dsg|lef|schkg|dbg|lifd)\b',
+        r'\b(cp|cc|co|cpc|cpp|ltf|bgg|bv|stgb|zgb|or|zpo|stpo|lpd|dsg|lef|lp|schkg|dbg|lifd|cost\.|cst\.)\b',
         _canon, result, flags=re.IGNORECASE,
     )
     # 5. "CODE N" (senza Art.) → "Art. N CODE"   (es. "OR 50" → "Art. 50 OR")
@@ -361,42 +363,53 @@ def pre_processa_query(query: str) -> str:
     return result.strip()
 
 
-# Equivalenze tra sigle di legge nelle tre lingue nazionali (IT/FR ↔ DE)
+# Equivalenze tra sigle di legge nelle tre lingue nazionali (IT / FR / DE)
+# Per leggi con sigla identica in IT e FR (CO, CP, CC, CPC, CPP, LTF, LPD)
+# l'equivalente FR è già coperto dalla sigla IT — si aggiunge solo il DE.
+# Per leggi con sigle diverse nelle tre lingue (Cost./Cst./BV, LEF/LP/SchKG)
+# si espande a tutte e tre le forme.
 _CODE_EQUIVALENTS: dict[str, list[str]] = {
-    "CP":    ["StGB"],          # Codice penale = Strafgesetzbuch
-    "CC":    ["ZGB"],           # Codice civile = Zivilgesetzbuch
-    "CO":    ["OR"],            # Codice delle obbligazioni = Obligationenrecht
-    "CPC":   ["ZPO"],           # Codice proc. civile = Zivilprozessordnung
-    "CPP":   ["StPO"],          # Codice proc. penale = Strafprozessordnung
-    "LTF":   ["BGG"],           # Legge Trib. federale = Bundesgerichtsgesetz
-    "Cost.": ["BV"],             # Costituzione federale IT → DE
-    "Cst.":  ["BV"],             # Costituzione federale FR → DE
-    "LPD":   ["DSG"],           # Legge protezione dati = Datenschutzgesetz
-    "LEF":   ["SchKG"],         # Legge esecuzione = Schuldbetreibungsgesetz
-    # Tedesco → Italiano/Francese
+    # IT = FR → aggiunge DE
+    "CP":    ["StGB"],          # Codice penale (IT) = Code pénal (FR) = Strafgesetzbuch (DE)
+    "CC":    ["ZGB"],           # Codice civile (IT) = Code civil (FR) = Zivilgesetzbuch (DE)
+    "CO":    ["OR"],            # Codice obbligazioni (IT) = Code des obligations (FR) = OR (DE)
+    "CPC":   ["ZPO"],           # Cod. proc. civile (IT/FR) = Zivilprozessordnung (DE)
+    "CPP":   ["StPO"],          # Cod. proc. penale (IT/FR) = Strafprozessordnung (DE)
+    "LTF":   ["BGG"],           # Legge TF (IT/FR) = Bundesgerichtsgesetz (DE)
+    "LPD":   ["DSG"],           # Legge prot. dati (IT/FR) = Datenschutzgesetz (DE)
+    # Costituzione — IT ≠ FR ≠ DE: espande a tutte e tre
+    "Cost.": ["Cst.", "BV"],    # IT → FR + DE
+    "Cst.":  ["Cost.", "BV"],   # FR → IT + DE
+    # Legge esecuzione — IT ≠ FR ≠ DE: espande a tutte e tre
+    "LEF":   ["LP", "SchKG"],   # IT → FR + DE
+    "LP":    ["LEF", "SchKG"],  # FR → IT + DE
+    # Imposta federale diretta — IT/FR = LIFD, DE = DBG
+    "LIFD":  ["DBG"],           # IT/FR → DE
+    "DBG":   ["LIFD"],          # DE → IT/FR
+    # DE → IT + FR
     "StGB":  ["CP"],
     "ZGB":   ["CC"],
     "OR":    ["CO"],
     "ZPO":   ["CPC"],
     "StPO":  ["CPP"],
     "BGG":   ["LTF"],
-    "BV":    ["Cost."],          # Costituzione federale DE → IT
+    "BV":    ["Cost.", "Cst."], # DE → IT + FR
     "DSG":   ["LPD"],
-    "SchKG": ["LEF"],
+    "SchKG": ["LEF", "LP"],     # DE → IT + FR
 }
 
 # Trova "Art. NNN [cpv./Abs./al. N] CODE" nella query già normalizzata
 _ART_CODE_RE = re.compile(
     r'(Art\.\s+\d+[a-z]?)'
     r'(\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\b',
+    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
     re.UNICODE,
 )
 
 # Riconosce una query che è SOLO un riferimento articolo (nessun concetto aggiuntivo)
 _PURE_ART_RE = re.compile(
     r'^Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'(?:\s+(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG))+\s*$',
+    r'(?:\s+(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD))+\s*$',
     re.UNICODE,
 )
 
@@ -451,10 +464,16 @@ Trasforma la query dell'utente in termini di ricerca ottimali per un motore full
 di sentenze federali svizzere (OpenCaseLaw).
 
 Regole:
-- Se la query contiene riferimenti ad articoli (es. "Art. 111 CP StGB", "Art. 336 CO OR"),
-  includili ESATTAMENTE nella query ottimizzata, senza modificarli né rimuovere le sigle.
-  Il riferimento articolo deve apparire in primo piano.
-- Per query basate solo su articoli, restituisci il riferimento com'è (max 1 concetto aggiuntivo).
+- Se la query contiene un riferimento ad un articolo di legge, DEVI sempre includere
+  le sigle equivalenti nelle tre lingue nazionali svizzere (italiano, francese, tedesco).
+  Esempio: "Art. 336 CO" → "Art. 336 CO OR" (CO=italiano/francese, OR=tedesco)
+  Esempio: "Art. 111 CP" → "Art. 111 CP StGB" (CP=italiano/francese, StGB=tedesco)
+  Esempio: "Art. 10 Cost." → "Art. 10 Cost. Cst. BV" (Cost.=IT, Cst.=FR, BV=DE)
+  Esempio: "Art. 88 LEF" → "Art. 88 LEF LP SchKG" (LEF=IT, LP=FR, SchKG=DE)
+  Esempio: "§ 111 StGB" → "Art. 111 StGB CP" (aggiungi equivalente IT/FR)
+  Questo vale per QUALSIASI legge federale svizzera, anche quelle meno comuni.
+  Il riferimento articolo deve apparire in primo piano nella query.
+- Per query basate solo su articoli, restituisci solo il riferimento trilingue (nessun concetto aggiuntivo).
 - Per query concettuali senza articoli, estrai 1–4 concetti giuridici chiave.
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
 - Usa la lingua della query (it/de/fr) o termini giuridici standard svizzeri.
@@ -462,36 +481,32 @@ Regole:
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
 async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
-    # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN"
+    # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN CODE"
     query_norm = pre_processa_query(query)
-    # 2. Espandi con sigle equivalenti nelle altre lingue ("Art. 111 CP" → "Art. 111 CP StGB")
-    query_exp  = espandi_codici_articolo(query_norm)
 
-    # Se è una query puramente articolo, salta l'AI: già ottimale
-    if _PURE_ART_RE.match(query_exp.strip()):
-        log.info("Pure article query — skip AI optimizer: '%s'", query_exp)
-        return query_exp, "Articolo di legge"
-
+    # 2. L'AI ottimizza E espande nelle 3 lingue (per qualsiasi legge federale svizzera)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{query_exp}"'},
+                {"role": "user",   "content": f'Query: "{query_norm}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", query_exp)
-            # Re-applica normalizzazione + espansione sull'output AI
-            # (l'AI potrebbe aver alterato i riferimenti articolo)
-            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
+            raw_opt = d.get("query_ottimizzata", query_norm)
+            # Normalizza l'output AI (formato articoli, sigle) ma NON ri-espandere:
+            # l'AI ha già incluso tutte le sigle nelle 3 lingue
+            final_opt = pre_processa_query(raw_opt)
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
-    return query_exp, "Query diretta"
+
+    # Fallback se AI non disponibile: espansione hardcoded per i codici più comuni
+    return espandi_codici_articolo(query_norm), "Query diretta"
 
 
 # ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
