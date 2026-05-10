@@ -709,18 +709,27 @@ async def _ocl_search(
         params["language"] = language
     if offset:
         params["offset"] = offset
-    try:
-        r = await http.get(
-            f"{OPENCASELAW_BASE}/decisions",
-            params=params,
-            timeout=15.0,
-        )
-        r.raise_for_status()
-        d = r.json()
-        return d.get("results", d if isinstance(d, list) else [])
-    except Exception as exc:
-        log.error("OCL search error: %s", repr(exc))
-        return []
+    # Timeout ridotto a 8s + un retry automatico in caso di ReadTimeout
+    for attempt in range(2):
+        try:
+            r = await http.get(
+                f"{OPENCASELAW_BASE}/decisions",
+                params=params,
+                timeout=8.0,
+            )
+            r.raise_for_status()
+            d = r.json()
+            return d.get("results", d if isinstance(d, list) else [])
+        except httpx.ReadTimeout:
+            if attempt == 0:
+                log.warning("OCL search timeout (attempt 1), retrying: %s", query[:80])
+                continue
+            log.error("OCL search timeout (attempt 2), giving up: %s", query[:80])
+            return []
+        except Exception as exc:
+            log.error("OCL search error: %s", repr(exc))
+            return []
+    return []
 
 def _rerank(hits: list[dict]) -> list[dict]:
     """Re-ordina i risultati OCL per: relevance_score × log(1 + citation_count).
