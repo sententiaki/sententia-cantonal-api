@@ -1,0 +1,1416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Summarize — Sententia</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Albert+Sans:ital,wght@0,100..900;1,100..900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --white:       #FFFFFF;
+    --black:       #111111;
+    --accent:      #111111;
+    --accent-dim:  rgba(17,17,17,0.06);
+    --accent-mid:  rgba(17,17,17,0.12);
+    --text-muted:  #6B6A6A;
+    --bg-soft:     #F3F2F2;
+    --border:      #E2E2E2;
+    --border-dark: rgba(255,255,255,0.1);
+    --ff:          'Albert Sans', system-ui, sans-serif;
+    --ease:        cubic-bezier(0.4,0,0.2,1);
+    --ease-out:    cubic-bezier(0,0,0.2,1);
+    --nav-h:       80px;
+    --panel-w-art: 380px;
+    --panel-w-dec: 560px;
+  }
+  *, *::before, *::after { box-sizing:border-box; margin:0; padding:0; }
+  html { font-size:16px; }
+  body {
+    font-family:var(--ff); background:var(--white); color:var(--black);
+    -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+
+  /* ── NAV ── */
+  #nav {
+    height:var(--nav-h); background:var(--white);
+    border-bottom:1px solid var(--border); flex-shrink:0; z-index:100;
+    transition:background 0.35s var(--ease), box-shadow 0.35s var(--ease);
+  }
+  #nav.scrolled {
+    background:rgba(255,255,255,0.88);
+    backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px);
+    box-shadow:0 2px 24px rgba(0,0,0,0.04);
+  }
+  .nav-inner {
+    height:100%; max-width:1400px; margin:0 auto;
+    padding:0 clamp(20px,4vw,48px) 0; padding-top:14px;
+    display:flex; align-items:center; justify-content:space-between; gap:32px;
+  }
+  .nav-logo { display:flex; align-items:center; gap:10px; text-decoration:none; }
+  .nav-logo-text { height:22px; width:auto; object-fit:contain; }
+  .nav-links { display:flex; align-items:center; gap:36px; list-style:none; }
+  .nav-links a {
+    font-size:15px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--black); position:relative; padding-bottom:3px;
+    transition:color 0.2s; text-decoration:none;
+  }
+  .nav-links a::after {
+    content:''; position:absolute; bottom:0; left:0;
+    width:0; height:1.5px; background:var(--accent); transition:width 0.3s var(--ease);
+  }
+  .nav-links a:hover { color:var(--accent); }
+  .nav-links a:hover::after, .nav-links a.active::after { width:100%; }
+  .ws-nav-mode { display:inline-flex !important; align-items:center; gap:6px; padding:8px 16px !important; background:var(--black) !important; color:var(--white) !important; border:1.5px solid var(--black); border-radius:12px; font-size:14px !important; font-weight:600; letter-spacing:.06em; text-transform:uppercase; }
+  .nav-links a.ws-nav-mode::after { display:none; }
+  .nav-links a.ws-nav-mode:hover { color:var(--white) !important; opacity:0.85; }
+  .nav-right { display:flex; align-items:center; gap:12px; }
+  .btn-nav {
+    display:inline-flex; align-items:center; gap:6px; padding:10px 22px;
+    background:var(--black); color:var(--white); font-family:var(--ff);
+    font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    border-radius:999px; text-decoration:none; transition:transform 0.2s,box-shadow 0.25s;
+    white-space:nowrap; border:none; cursor:pointer;
+  }
+  .btn-nav:hover { transform:scale(1.02); box-shadow:0 4px 20px rgba(17,17,17,0.18); }
+
+  /* ── APP CONTAINER (full-viewport app shell) ── */
+  .app-container { height:100vh; overflow:hidden; display:flex; flex-direction:column; }
+
+  /* ── LANDING SECTIONS — fade out when summary is shown ── */
+  .landing-sections {
+    transition: opacity 0.35s var(--ease);
+  }
+  body.summary-active .landing-sections {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ── CONTAINER (landing sections) ── */
+  .container { width:100%; max-width:1200px; margin:0 auto; padding:0 clamp(20px,5vw,64px); }
+
+  /* ── SCROLL REVEAL ── */
+  .reveal { opacity:0; transform:translateY(28px); transition:opacity 0.7s var(--ease-out),transform 0.7s var(--ease-out); }
+  .reveal.visible { opacity:1; transform:translateY(0); }
+  .delay-1 { transition-delay:0.1s; }
+  .delay-2 { transition-delay:0.2s; }
+  .delay-3 { transition-delay:0.3s; }
+  .delay-4 { transition-delay:0.4s; }
+
+  /* ── NAV SCROLL STATE — handled above in #nav.scrolled ── */
+
+  /* ── HAMBURGER ── */
+  .hamburger { display:none; flex-direction:column; gap:5px; cursor:pointer; padding:4px; background:none; border:none; }
+  .hamburger span { display:block; width:22px; height:1.5px; background:var(--black); transition:all 0.3s var(--ease); }
+  .hamburger.open span:nth-child(1) { transform:translateY(6.5px) rotate(45deg); }
+  .hamburger.open span:nth-child(2) { opacity:0; transform:scaleX(0); }
+  .hamburger.open span:nth-child(3) { transform:translateY(-6.5px) rotate(-45deg); }
+
+  /* ── MOBILE MENU ── */
+  .mobile-menu { display:none; position:fixed; top:var(--nav-h); left:0; right:0; background:var(--white); border-bottom:1px solid var(--border); z-index:899; padding:28px clamp(20px,5vw,64px) 32px; flex-direction:column; gap:20px; box-shadow:0 8px 32px rgba(0,0,0,0.06); }
+  .mobile-menu.open { display:flex; }
+  .mobile-menu a { font-size:13px; font-weight:600; letter-spacing:0.08em; text-transform:uppercase; color:var(--black); padding:8px 0; border-bottom:1px solid var(--border); text-decoration:none; }
+
+  /* ── HERO (landing) ── */
+  #hero { position:relative; padding:80px 0; text-align:center; overflow:hidden; }
+  #hero::before { content:''; position:absolute; inset:0; background:radial-gradient(ellipse 70% 60% at 50% 40%,rgba(88,87,255,0.05) 0%,transparent 70%); pointer-events:none; }
+  #hero::after { content:''; position:absolute; inset:0; pointer-events:none; background-image:radial-gradient(circle,rgba(17,17,17,0.06) 1px,transparent 1px); background-size:28px 28px; mask-image:radial-gradient(ellipse 80% 80% at 50% 50%,transparent 30%,black 100%); }
+  .hero-icon-bg { position:absolute; right:-40px; top:50%; transform:translateY(-50%); width:clamp(260px,28vw,400px); height:clamp(260px,28vw,400px); opacity:0.07; pointer-events:none; z-index:0; }
+  .hero-icon-bg-left { position:absolute; left:-60px; bottom:10%; width:clamp(180px,18vw,260px); height:clamp(180px,18vw,260px); opacity:0.05; pointer-events:none; z-index:0; }
+  @media(max-width:768px){.hero-icon-bg,.hero-icon-bg-left{display:none;}}
+  .hero-inner { position:relative; z-index:1; max-width:780px; margin:0 auto; }
+  .hero-icon-top { width:72px; height:72px; object-fit:contain; margin:0 auto 28px; display:block; }
+  .hero-badge { display:inline-flex; align-items:center; gap:8px; padding:6px 16px; background:var(--accent-dim); border:1px solid var(--accent-mid); border-radius:999px; font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--accent); margin-bottom:36px; }
+  .hero-badge-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); animation:blink 2s ease-in-out infinite; }
+  .hero-h1 { font-size:clamp(36px,6vw,72px); font-weight:800; line-height:1.02; letter-spacing:-0.035em; color:var(--black); margin-bottom:28px; }
+  .hero-rule { width:60px; height:2px; background:var(--border); margin:0 auto 28px; }
+  .hero-sub { font-size:clamp(16px,2vw,19px); font-weight:400; line-height:1.65; color:var(--text-muted); max-width:600px; margin:0 auto; }
+
+  /* ── HOW IT WORKS ── */
+  #how { background:var(--bg-soft); padding:clamp(80px,10vw,120px) 0; }
+  .how-head { margin-bottom:64px; }
+  .section-tag { display:inline-flex; align-items:center; gap:12px; font-size:10px; font-weight:800; letter-spacing:0.18em; text-transform:uppercase; color:var(--accent); margin-bottom:18px; }
+  .section-tag::before { content:''; display:block; width:28px; height:2px; background:var(--accent); border-radius:2px; }
+  .section-h2 { font-size:clamp(32px,4vw,52px); font-weight:800; line-height:1.05; letter-spacing:-0.03em; color:var(--black); margin-bottom:16px; }
+  .section-lead { font-size:18px; font-weight:400; line-height:1.7; color:var(--text-muted); max-width:560px; }
+  .steps-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:24px; }
+  .step-card { background:var(--white); border:1px solid var(--border); border-radius:16px; padding:40px 36px 44px; position:relative; overflow:hidden; transition:transform 0.3s var(--ease),box-shadow 0.3s var(--ease); }
+  .step-card::after { content:''; position:absolute; bottom:0; left:0; right:0; height:3px; background:var(--black); transform:scaleX(0); transform-origin:left; transition:transform 0.4s var(--ease); }
+  .step-card:hover { transform:translateY(-5px); box-shadow:0 20px 56px rgba(0,0,0,0.09); }
+  .step-card:hover::after { transform:scaleX(1); }
+  .step-num { font-size:10px; font-weight:800; letter-spacing:0.2em; text-transform:uppercase; color:var(--text-muted); margin-bottom:20px; }
+  .step-icon { width:44px; height:44px; background:var(--accent-dim); border:1px solid var(--accent-mid); border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:24px; }
+  .step-icon svg { width:20px; height:20px; }
+  .step-title { font-size:20px; font-weight:800; letter-spacing:-0.02em; line-height:1.2; color:var(--black); margin-bottom:12px; }
+  .step-desc { font-size:14px; font-weight:400; line-height:1.7; color:var(--text-muted); }
+
+  /* ── NOTICE ── */
+  #notice { padding:clamp(48px,6vw,80px) 0; background:var(--white); }
+  .notice-inner { max-width:720px; margin:0 auto; text-align:center; }
+  .notice-icon { width:40px; height:40px; background:rgba(255,180,0,0.1); border:1px solid rgba(255,180,0,0.25); border-radius:10px; display:inline-flex; align-items:center; justify-content:center; margin-bottom:20px; }
+  .notice-icon svg { width:18px; height:18px; color:#B87800; }
+  .notice-title { font-size:18px; font-weight:700; color:var(--black); margin-bottom:12px; }
+  .notice-text { font-size:15px; font-weight:400; line-height:1.7; color:var(--text-muted); }
+
+  /* ── STATS ── */
+  #stats { background:var(--black); padding:clamp(40px,5vw,72px) 0; position:relative; overflow:hidden; }
+  #stats::before { content:''; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:800px; height:400px; background:radial-gradient(ellipse at center,rgba(255,255,255,0.05) 0%,transparent 70%); pointer-events:none; }
+  .stats-grid { display:grid; grid-template-columns:repeat(3,1fr); position:relative; }
+  .stat-cell { padding:36px 48px; text-align:center; position:relative; }
+  .stat-cell:not(:last-child)::after { content:''; position:absolute; top:20%; right:0; height:60%; width:1px; background:rgba(255,255,255,0.08); }
+  .stat-number { font-size:clamp(48px,6vw,72px); font-weight:800; line-height:1; letter-spacing:-0.04em; color:var(--white); margin-bottom:12px; }
+  .stat-number sup { font-size:0.45em; vertical-align:super; letter-spacing:0; }
+  .stat-label { font-size:11px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:rgba(255,255,255,0.35); }
+
+  /* ── CTA ── */
+  #cta { background:var(--bg-soft); padding:clamp(80px,10vw,120px) 0; }
+  .cta-inner { text-align:center; max-width:600px; margin:0 auto; }
+  .cta-inner .section-tag { justify-content:center; }
+  .cta-inner .section-tag::before { display:none; }
+  .cta-inner .section-tag::after { content:''; display:block; width:28px; height:2px; background:var(--accent); border-radius:2px; }
+  .cta-h { font-size:clamp(32px,4vw,52px); font-weight:800; line-height:1.05; letter-spacing:-0.03em; color:var(--black); margin-bottom:16px; }
+  .cta-sub { font-size:17px; line-height:1.65; color:var(--text-muted); margin-bottom:40px; }
+  .cta-btns { display:flex; gap:14px; justify-content:center; flex-wrap:wrap; }
+  .btn-primary { display:inline-flex; align-items:center; gap:8px; padding:15px 32px; background:var(--black); color:var(--white); font-family:var(--ff); font-size:14px; font-weight:700; letter-spacing:0.04em; border-radius:999px; border:none; cursor:pointer; transition:transform 0.2s,box-shadow 0.25s; text-decoration:none; }
+  .btn-primary:hover { transform:scale(1.02); box-shadow:0 6px 28px rgba(17,17,17,0.2); }
+  .btn-secondary { display:inline-flex; align-items:center; gap:8px; padding:14px 32px; background:transparent; color:var(--black); font-family:var(--ff); font-size:14px; font-weight:700; letter-spacing:0.04em; border-radius:999px; border:1.5px solid var(--border); cursor:pointer; transition:border-color 0.25s,background 0.25s,color 0.25s,transform 0.2s; text-decoration:none; }
+  .btn-secondary:hover { border-color:var(--black); background:var(--accent-dim); transform:scale(1.02); }
+
+  /* ── FOOTER ── */
+  footer { background:var(--black); color:rgba(255,255,255,0.5); padding:72px 0 36px; }
+  .footer-top { display:grid; grid-template-columns:2fr 1fr 1fr 1fr; gap:56px; padding-bottom:56px; border-bottom:1px solid var(--border-dark); margin-bottom:36px; align-items:start; }
+  .footer-brand p { font-size:13px; line-height:1.75; color:rgba(255,255,255,0.35); max-width:240px; margin-bottom:24px; }
+  .footer-email { display:inline-flex; align-items:center; gap:8px; font-size:12px; font-weight:600; color:rgba(255,255,255,0.5); transition:color 0.2s; text-decoration:none; }
+  .footer-email:hover { color:var(--white); }
+  .footer-col h5 { font-size:10px; font-weight:800; letter-spacing:0.15em; text-transform:uppercase; color:rgba(255,255,255,0.6); margin-bottom:20px; }
+  .footer-col ul { list-style:none; display:flex; flex-direction:column; gap:10px; }
+  .footer-col a { font-size:13px; color:rgba(255,255,255,0.35); transition:color 0.2s; }
+  .footer-col a:hover { color:var(--white); }
+  .footer-bottom { display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+  .footer-copy { font-size:12px; color:rgba(255,255,255,0.2); }
+  .footer-social { display:flex; gap:16px; }
+  .footer-social a { display:flex; align-items:center; justify-content:center; width:34px; height:34px; border:1px solid rgba(255,255,255,0.1); border-radius:50%; color:rgba(255,255,255,0.4); font-size:13px; transition:border-color 0.2s,color 0.2s; }
+  .footer-social a:hover { border-color:var(--white); color:var(--white); }
+
+  /* ── LANDING RESPONSIVE ── */
+  @media(max-width:1024px){.footer-top{grid-template-columns:1fr 1fr;gap:40px;}}
+  @media(max-width:768px){.nav-links{display:none !important;}.hamburger{display:flex;}.steps-grid{grid-template-columns:1fr;}.stats-grid{grid-template-columns:1fr;}.stat-cell:not(:last-child)::after{top:auto;bottom:0;right:20%;height:1px;width:60%;}.footer-top{grid-template-columns:1fr;gap:32px;}.footer-bottom{flex-direction:column;align-items:flex-start;}}
+  @media(max-width:480px){.cta-btns{flex-direction:column;align-items:stretch;}.cta-btns .btn-primary,.cta-btns .btn-secondary{justify-content:center;}}
+
+  /* ── SUMMARIZE MOBILE ADAPTATIONS ── */
+  @media(max-width:768px) {
+    /* App container: allow full scroll on mobile */
+    .app-container { height:auto; min-height:100dvh; overflow:visible; }
+    .home-wrap { overflow:visible; padding:clamp(28px,6vh,56px) 20px 32px; }
+    .home-deco-bg { display:none; }
+
+    /* Home search card */
+    .home-search-card { padding:24px 18px; border-radius:16px; }
+    .home-lang-row { flex-wrap:wrap; gap:8px; }
+
+    /* Input + button: stack vertically, full width */
+    .home-input-row { flex-direction:column; gap:10px; }
+    .home-input {
+      border-radius:12px !important;
+      padding:16px 16px 16px 44px;
+      font-size:16px; /* prevents iOS auto-zoom on focus */
+      width:100%;
+    }
+    .home-input-icon { display:none; }
+    .home-input { padding-left:16px !important; }
+    .home-input-btn {
+      display:flex !important;
+      width:100%; border-radius:12px !important;
+      padding:12px 20px !important;
+      justify-content:center; align-items:center;
+      font-size:12px; letter-spacing:0.08em;
+    }
+
+    /* Example chips: scrollable row */
+    .home-examples { flex-wrap:nowrap; overflow-x:auto; padding-bottom:4px; }
+    .home-examples::-webkit-scrollbar { display:none; }
+
+    /* Results layout: vertical stack, full scroll */
+    .results-layout.active { flex-direction:column; overflow:visible; }
+    .results-main { overflow:visible; }
+    .cols-wrap { overflow:visible; }
+    .col-results { overflow:visible; }
+
+    /* Top search bar in results */
+    .center-search-bar { position:sticky; }
+    .center-search-bar-inner {
+      flex-wrap:wrap; gap:8px; padding:12px 16px;
+    }
+    .csb-lang-btns { order:3; }
+    .csb-input-wrap { order:1; flex-basis:100%; }
+    .csb-btn { order:2; width:100%; justify-content:center; }
+    .csb-code { order:0; }
+
+    /* Results scroll */
+    .results-inner { overflow-y:auto; padding:20px 16px; -webkit-overflow-scrolling:touch; }
+
+    /* Summary card */
+    .sum-card-head { padding:18px 18px 14px; flex-direction:column; gap:8px; }
+    .sum-card-body { padding:18px 18px; font-size:15px; line-height:1.85; }
+    .sum-card-toolbar { padding:12px 18px; }
+    .sum-actions { flex-wrap:wrap; }
+  }
+
+  /* ── HOME WRAP ── */
+  .home-wrap {
+    flex:1; display:flex; flex-direction:column;
+    align-items:center; justify-content:flex-start;
+    padding:clamp(44px,9vh,88px) clamp(20px,5vw,64px) clamp(32px,6vh,64px);
+    background:var(--white); position:relative; overflow:hidden;
+  }
+  .home-wrap::after {
+    content:''; position:absolute; inset:0; pointer-events:none;
+    background-image:radial-gradient(circle,rgba(17,17,17,0.05) 1px,transparent 1px);
+    background-size:28px 28px;
+    mask-image:radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, black 100%);
+  }
+  .home-inner { position:relative; z-index:1; width:100%; max-width:780px; text-align:center; }
+  .home-icon { width:64px; height:64px; object-fit:contain; margin:0 auto 24px; display:block; }
+  .home-badge {
+    display:inline-flex; align-items:center; gap:8px; padding:6px 16px;
+    background:var(--accent-dim); border:1px solid var(--accent-mid); border-radius:999px;
+    font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    color:var(--accent); margin-bottom:32px;
+  }
+  .home-badge-dot { width:6px; height:6px; border-radius:50%; background:var(--accent); animation:blink 2s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .home-h1 { font-size:clamp(36px,5vw,64px); font-weight:800; line-height:1.02; letter-spacing:-0.035em; color:var(--black); margin-bottom:16px; }
+  .home-rule { width:60px; height:2px; background:var(--border); margin:0 auto 24px; }
+  .home-sub { font-size:17px; font-weight:400; line-height:1.65; color:var(--text-muted); max-width:560px; margin:0 auto 36px; }
+  .home-search-card {
+    width:100%; max-width:720px; margin:0 auto;
+    background:var(--white); border:1px solid var(--border);
+    border-radius:20px; padding:36px 40px;
+    box-shadow:0 8px 48px rgba(0,0,0,0.06); text-align:left;
+  }
+  .home-card-label { font-size:10px; font-weight:800; letter-spacing:0.18em; text-transform:uppercase; color:var(--text-muted); margin-bottom:14px; display:block; }
+  .home-lang-row { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .home-lang-label { font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); }
+  .home-lang-btns { display:flex; gap:4px; }
+  .home-lang-btn {
+    padding:5px 13px; font-family:var(--ff); font-size:11px; font-weight:700;
+    letter-spacing:0.08em; text-transform:uppercase; border-radius:8px;
+    border:1.5px solid var(--border); background:transparent; color:var(--text-muted);
+    cursor:pointer; transition:all 0.15s;
+  }
+  .home-lang-btn.active { background:var(--black); color:var(--white); border-color:var(--black); }
+  .home-lang-btn:hover:not(.active) { border-color:#999; color:var(--black); }
+  .home-input-row { display:flex; gap:0; position:relative; margin-bottom:14px; }
+  .home-input-icon { position:absolute; left:16px; top:50%; transform:translateY(-50%); color:#AAA; pointer-events:none; }
+  .home-input {
+    flex:1; padding:17px 20px 17px 46px; font-family:var(--ff); font-size:15px;
+    font-weight:400; color:var(--black); background:var(--bg-soft);
+    border:1.5px solid var(--border); border-radius:12px 0 0 12px; outline:none;
+    transition:border-color 0.2s,box-shadow 0.2s;
+  }
+  .home-input::placeholder { color:rgba(107,106,106,0.55); }
+  .home-input:focus { border-color:var(--black); box-shadow:0 0 0 3px rgba(17,17,17,0.06); z-index:1; position:relative; }
+  .home-input-btn {
+    display:inline-flex; align-items:center; gap:8px; padding:0 28px;
+    background:var(--black); color:var(--white); font-family:var(--ff);
+    font-size:12px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    border:none; border-radius:0 12px 12px 0; cursor:pointer;
+    transition:box-shadow 0.2s; white-space:nowrap; flex-shrink:0;
+  }
+  .home-input-btn:hover { box-shadow:inset 0 0 0 99px rgba(255,255,255,0.08); }
+  .home-input-btn:disabled { opacity:0.65; cursor:not-allowed; pointer-events:none; }
+  @keyframes homeSpin { to { transform:rotate(360deg); } }
+  .home-btn-spinner {
+    display:inline-block; width:13px; height:13px;
+    border:2px solid rgba(255,255,255,0.35); border-top-color:#fff;
+    border-radius:50%; animation:homeSpin 0.7s linear infinite;
+  }
+  .home-examples { display:flex; align-items:center; gap:7px; flex-wrap:wrap; margin-top:2px; }
+  .home-examples-label { font-size:11px; font-weight:600; letter-spacing:0.06em; text-transform:uppercase; color:var(--text-muted); }
+  .example-chip {
+    padding:5px 12px; background:var(--accent-dim); border:1px solid var(--accent-mid);
+    border-radius:999px; font-size:12px; font-weight:500; color:var(--black);
+    cursor:pointer; transition:background 0.2s,border-color 0.2s;
+  }
+  .example-chip:hover { background:var(--accent-mid); }
+
+  /* ── RESULTS LAYOUT ── */
+  .results-layout { flex:1; display:none; overflow:hidden; }
+  .results-layout.active { display:flex; }
+  .results-main { display:flex; flex-direction:column; flex:1; overflow:hidden; min-width:0; }
+  .cols-wrap { flex:1; display:flex; overflow:hidden; }
+
+  /* ── CENTER COLUMN ── */
+  .col-results {
+    flex:1; display:flex; flex-direction:column;
+    overflow:hidden; min-width:0; transition:flex 0.35s var(--ease);
+  }
+  .center-search-bar {
+    position:sticky; top:0; z-index:20;
+    background:var(--white); border-bottom:1px solid var(--border);
+    overflow:hidden;
+  }
+  .center-search-bar-inner {
+    max-width:860px; margin:0 auto; padding:20px 28px;
+    display:flex; align-items:center; gap:12px;
+  }
+  .csb-code {
+    font-size:13px; font-weight:700; letter-spacing:0.02em; color:var(--black);
+    background:var(--bg-soft); border:1px solid var(--border);
+    border-radius:8px; padding:7px 14px; flex-shrink:0;
+  }
+  .csb-input-wrap { flex:1; position:relative; }
+  .csb-input {
+    width:100%; padding:10px 16px 10px 40px; font-family:var(--ff); font-size:14px;
+    color:var(--black); background:var(--bg-soft); border:1.5px solid var(--border);
+    border-radius:10px; outline:none; transition:border-color 0.2s;
+  }
+  .csb-input:focus { border-color:var(--black); }
+  .csb-input-icon { position:absolute; left:12px; top:50%; transform:translateY(-50%); color:#AAA; pointer-events:none; }
+  .csb-btn {
+    display:inline-flex; align-items:center; gap:6px; padding:10px 20px;
+    background:var(--black); color:var(--white); font-family:var(--ff);
+    font-size:11px; font-weight:700; letter-spacing:0.1em; text-transform:uppercase;
+    border:none; border-radius:999px; cursor:pointer; white-space:nowrap; flex-shrink:0;
+    transition:transform 0.2s,box-shadow 0.2s;
+  }
+  .csb-btn:hover { transform:scale(1.02); box-shadow:0 4px 16px rgba(17,17,17,0.18); }
+  .csb-lang-btns { display:flex; gap:3px; flex-shrink:0; }
+  .csb-lang-btn {
+    padding:4px 10px; font-family:var(--ff); font-size:10px; font-weight:700;
+    letter-spacing:0.08em; text-transform:uppercase; border-radius:6px;
+    border:1.5px solid var(--border); background:transparent; color:var(--text-muted);
+    cursor:pointer; transition:all 0.15s;
+  }
+  .csb-lang-btn.active { background:var(--black); color:var(--white); border-color:var(--black); }
+  .csb-lang-btn:hover:not(.active) { border-color:#999; color:var(--black); }
+
+  .results-inner { flex:1; overflow-y:auto; padding:32px 28px; }
+  .results-inner::-webkit-scrollbar { width:4px; }
+  .results-inner::-webkit-scrollbar-thumb { background:var(--border); border-radius:4px; }
+
+  /* ── SUMMARY CARD ── */
+  .sum-card {
+    max-width:760px; margin:0 auto;
+    background:var(--white); border:1px solid var(--border);
+    border-radius:16px; overflow:hidden;
+    box-shadow:0 2px 20px rgba(0,0,0,0.04);
+  }
+  .sum-card-head {
+    padding:28px 32px 20px;
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+  }
+  .sum-card-meta { font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px; }
+  .sum-card-date { font-size:17px; font-weight:800; letter-spacing:-0.02em; color:var(--black); }
+  .sum-ai-badge {
+    display:inline-block; font-size:10px; font-weight:800; letter-spacing:0.12em;
+    text-transform:uppercase; background:var(--black); color:var(--white);
+    padding:4px 10px; border-radius:4px; flex-shrink:0; margin-top:2px;
+  }
+  .sum-card-body { padding:28px 32px; font-size:16px; line-height:2.0; color:#222; }
+  .sum-section-label { display:block; font-size:16px; font-weight:700; letter-spacing:-0.01em; color:var(--black); margin-bottom:8px; }
+  .sum-section-text { margin-bottom:24px; }
+  .sum-section-text p { margin:0; }
+  /* toolbar is now ABOVE the body */
+  .sum-card-toolbar {
+    padding:12px 32px; background:var(--bg-soft);
+    border-bottom:1px solid var(--border);
+    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;
+  }
+  .sum-arts-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .sum-arts-label { font-size:10px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#ADADAD; }
+  .art-tag {
+    padding:4px 10px; background:var(--accent-dim); border:1px solid var(--accent-mid);
+    border-radius:6px; font-size:11px; font-weight:600; color:var(--black);
+    cursor:pointer; transition:background 0.15s,border-color 0.15s; white-space:nowrap;
+  }
+  .art-tag:hover { background:var(--accent-mid); }
+  .art-tag.active { background:var(--black); color:var(--white); border-color:var(--black); }
+  .sum-actions { display:flex; gap:8px; flex-shrink:0; }
+  .btn-outline {
+    display:inline-flex; align-items:center; gap:6px; padding:8px 16px;
+    border:1.5px solid rgba(17,17,17,0.18); border-radius:999px; background:transparent;
+    font-family:var(--ff); font-size:11px; font-weight:600; letter-spacing:0.06em;
+    text-transform:uppercase; color:var(--black); cursor:pointer;
+    transition:background 0.15s,border-color 0.15s;
+  }
+  .btn-outline:hover { background:var(--accent-dim); border-color:rgba(17,17,17,0.3); }
+
+  /* ── PROGRESS BAR LOADING ── */
+  .sum-progress-wrap {
+    max-width:480px; margin:88px auto; padding:0 24px;
+  }
+  .sum-progress-header {
+    font-size:13.5px; font-weight:500; color:var(--black);
+    text-align:center; margin-bottom:28px; line-height:1.5;
+  }
+  .sum-progress-header strong { font-weight:700; }
+  .sum-progress-track {
+    width:100%; height:2px; background:var(--border);
+    border-radius:2px; overflow:hidden; margin-bottom:14px;
+  }
+  .sum-progress-fill {
+    height:100%; background:var(--black); border-radius:2px;
+    width:0%; transition:width 1.4s cubic-bezier(0.4,0,0.2,1);
+  }
+  .sum-progress-step {
+    font-size:12px; color:var(--text-muted); text-align:center;
+    min-height:17px; opacity:0; transform:translateY(5px);
+    transition:opacity 0.4s ease, transform 0.4s ease;
+  }
+  .sum-progress-step.sps-on { opacity:1; transform:translateY(0); }
+  /* keep dots for other spinners (openLaw panel etc.) */
+  .sum-loading-wrap { max-width:760px; margin:60px auto; text-align:center; }
+  .sum-loading-dots { display:flex; justify-content:center; gap:6px; margin-bottom:16px; }
+  .sum-loading-dot {
+    width:7px; height:7px; border-radius:50%; background:var(--border);
+    animation:sumBounce 1.2s ease-in-out infinite;
+  }
+  .sum-loading-dot:nth-child(2) { animation-delay:0.15s; }
+  .sum-loading-dot:nth-child(3) { animation-delay:0.3s; }
+  @keyframes sumBounce {
+    0%,80%,100%{transform:scale(0.7);opacity:0.5}
+    40%{transform:scale(1.1);opacity:1}
+  }
+  .sum-loading-label { font-size:13px; color:var(--text-muted); }
+
+  /* ── RIGHT PANEL ── */
+  .col-panel {
+    display:flex; flex-direction:column;
+    width:0; min-width:0; overflow:hidden;
+    border-left:1px solid var(--border);
+    background:var(--white);
+    transition:width 0.35s var(--ease), min-width 0.35s var(--ease);
+  }
+  .col-panel.open-art { width:var(--panel-w-art); min-width:var(--panel-w-art); }
+  .col-panel.open-dec { width:var(--panel-w-dec); min-width:var(--panel-w-dec); }
+  .panel-hd {
+    display:flex; align-items:flex-start; justify-content:space-between;
+    padding:20px 22px 16px; border-bottom:1px solid var(--border); flex-shrink:0;
+  }
+  .panel-label { font-size:9px; font-weight:800; letter-spacing:0.15em; text-transform:uppercase; color:#ADADAD; margin-bottom:3px; }
+  .panel-title { font-size:16px; font-weight:800; letter-spacing:-0.02em; color:var(--black); }
+  .panel-close {
+    width:28px; height:28px; border-radius:50%; border:1px solid var(--border);
+    background:transparent; font-size:16px; color:var(--text-muted); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+    transition:background 0.15s; line-height:1;
+  }
+  .panel-close:hover { background:var(--bg-soft); }
+  .panel-body { flex:1; overflow-y:auto; padding:22px; }
+  .panel-body::-webkit-scrollbar { width:3px; }
+  .panel-body::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+  /* Panel content styles */
+  .dec-meta { font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px; }
+  .dec-date { font-size:22px; font-weight:800; letter-spacing:-0.03em; color:var(--black); margin-bottom:16px; }
+  .dec-orig-note {
+    display:inline-flex; align-items:center; gap:5px; font-size:10px; font-weight:600;
+    letter-spacing:0.08em; text-transform:uppercase; color:#AAA;
+    background:var(--bg-soft); border:1px solid var(--border);
+    padding:3px 9px; border-radius:4px; margin-bottom:18px;
+  }
+  .dec-section { margin-bottom:22px; }
+  .dec-section-title {
+    display:inline-block; font-size:10px; font-weight:800; letter-spacing:0.12em;
+    text-transform:uppercase; background:var(--black); color:var(--white);
+    padding:4px 10px; border-radius:4px; margin-bottom:12px;
+  }
+  .dec-text { font-size:13px; line-height:1.85; color:#333; white-space:pre-wrap; }
+  .dec-arts { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .law-divider { border:none; border-top:1px solid var(--border); margin:18px 0; }
+  .law-open-link { font-size:11px; font-weight:600; color:var(--text-muted); text-decoration:none; transition:color 0.15s; }
+  .law-open-link:hover { color:var(--black); }
+
+  /* ── Fedlex article renderer ── */
+  .art-body { display:flex; flex-direction:column; gap:6px; }
+  .art-cpv { display:flex; gap:14px; align-items:flex-start; }
+  .art-cpv-n {
+    font-size:10px; font-weight:700; letter-spacing:0.04em;
+    color:var(--text-muted); min-width:16px; flex-shrink:0; padding-top:3px;
+  }
+  .art-cpv-t { font-size:13px; line-height:1.8; color:#222; }
+  .art-list-item { display:flex; gap:12px; align-items:flex-start; padding-left:28px; }
+  .art-list-ltr {
+    font-size:10px; font-weight:700; color:var(--text-muted);
+    min-width:14px; flex-shrink:0; padding-top:3px;
+  }
+  .art-list-txt { font-size:13px; line-height:1.8; color:#222; }
+  .art-para { font-size:13px; line-height:1.8; color:#222; }
+
+  /* Full decision iframe panel */
+  .dec-iframe {
+    width:100%; height:100%; border:none; display:block;
+    flex:1; min-height:0;
+  }
+  .panel-iframe-wrap { display:flex; flex-direction:column; height:100%; margin:-22px; }
+  .panel-iframe-hd { padding:16px 22px; border-bottom:1px solid var(--border); flex-shrink:0; }
+
+  /* Copy action */
+  .sum-action-btn {
+    display:inline-flex; align-items:center; gap:6px; padding:7px 14px;
+    border:1px solid var(--border); border-radius:8px; background:transparent;
+    font-family:var(--ff); font-size:12px; font-weight:500; color:var(--text-muted);
+    cursor:pointer; transition:border-color 0.15s,color 0.15s;
+  }
+  .sum-action-btn:hover { border-color:#999; color:var(--black); }
+  /* Maintenance banner */
+  #maintenance-banner { display:none; align-items:center; gap:10px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 16px; margin:0 0 18px; font-size:12px; color:#92400e; }
+  #maintenance-banner svg { flex-shrink:0; opacity:0.7; }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav id="nav">
+  <div class="nav-inner">
+    <a class="nav-logo" href="https://sententia.ch/" aria-label="Sententia Home">
+      <img class="nav-logo-text" src="https://sententia.ch/wp-content/uploads/2025/02/TextOnly_NoBuffer-1-1-1024x96.png" alt="Sententia">
+    </a>
+    <ul class="nav-links">
+      <li><a href="https://sententia.ch/">Home</a></li>
+      <li><a href="https://sententia.ch/403-2/">About</a></li>
+      <li><a href="https://sententia.ch/351-2/" class="active">Summarize</a></li>
+      <li><a href="https://sententia.ch/357-2/">Search</a></li>
+      <li><a href="https://sententia.ch/sententia-workspace.html" class="ws-nav-mode"><svg width="10" height="10" viewBox="0 0 11 11" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="4" height="4" rx="1"></rect><rect x="6" y="1" width="4" height="4" rx="1"></rect><rect x="1" y="6" width="4" height="4" rx="1"></rect><rect x="6" y="6" width="4" height="4" rx="1"></rect></svg><span class="ws-nav-text"> Workspace</span></a></li>
+    </ul>
+    <div class="nav-right">
+      <button class="hamburger" id="hamburger" aria-label="Open menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+<div class="mobile-menu" id="mobile-menu">
+  <a href="https://sententia.ch/">Home</a>
+  <a href="https://sententia.ch/403-2/">About</a>
+  <a href="https://sententia.ch/351-2/">Summarize</a>
+  <a href="https://sententia.ch/357-2/">Search</a>
+  <a href="https://sententia.ch/sententia-workspace.html">Workspace</a>
+</div>
+
+<!-- ── APP CONTAINER ── -->
+<div class="app-container">
+
+<!-- ── HOME SCREEN ── -->
+<div class="home-wrap" id="homeWrap">
+  <!-- Decorative watermarks -->
+  <svg class="home-deco-bg" style="position:absolute;right:-40px;top:50%;transform:translateY(-50%);width:clamp(200px,22vw,340px);height:clamp(200px,22vw,340px);opacity:0.05;pointer-events:none;" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+    <path d="M40 40h120v120H40z" stroke="#111" stroke-width="10" rx="8"/>
+    <line x1="60" y1="75" x2="140" y2="75" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+    <line x1="60" y1="100" x2="140" y2="100" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+    <line x1="60" y1="125" x2="100" y2="125" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+    <circle cx="148" cy="152" r="24" stroke="#111" stroke-width="8"/>
+    <line x1="165" y1="169" x2="180" y2="184" stroke="#111" stroke-width="8" stroke-linecap="round"/>
+  </svg>
+  <svg style="position:absolute;left:-50px;bottom:8%;width:clamp(140px,15vw,220px);height:clamp(140px,15vw,220px);opacity:0.04;pointer-events:none;" viewBox="0 0 200 200" fill="none" aria-hidden="true">
+    <circle cx="100" cy="80" r="40" stroke="#111" stroke-width="10"/>
+    <path d="M40 170c0-33 27-60 60-60s60 27 60 60" stroke="#111" stroke-width="10" stroke-linecap="round"/>
+  </svg>
+
+  <div class="home-inner">
+    <img class="home-icon reveal hero-reveal" src="https://sententia.ch/wp-content/uploads/2025/02/IconOnly_NoBuffer-6-1024x1024.png" alt="">
+    <h1 class="home-h1 reveal hero-reveal delay-1">Understand any decision,<br>in seconds.</h1>
+    <div class="home-rule reveal hero-reveal delay-2"></div>
+    <p class="home-sub reveal hero-reveal delay-2">Enter a Swiss Federal Court docket number to instantly generate a complete AI summary — facts, ruling, and relevant articles.</p>
+
+    <div class="home-search-card reveal hero-reveal delay-3">
+      <span class="home-card-label">Legal Summarization — Swiss Federal Court</span>
+      <div class="home-lang-row">
+        <span class="home-lang-label">Language</span>
+        <div class="home-lang-btns">
+          <button class="home-lang-btn active" id="homeLangIt" onclick="setHomeLang('it',this)">IT</button>
+          <button class="home-lang-btn" id="homeLangDe" onclick="setHomeLang('de',this)">DE</button>
+          <button class="home-lang-btn" id="homeLangFr" onclick="setHomeLang('fr',this)">FR</button>
+        </div>
+      </div>
+      <div class="home-input-row">
+        <svg class="home-input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        <input class="home-input" id="homeInput" type="text"
+          placeholder="Es. 6B_51/2021  oppure  105 II 16  o  4A_61/2024"
+          onkeydown="if(event.key==='Enter') startSummarize()"
+          autocomplete="off">
+        <button class="home-input-btn" onclick="startSummarize()">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Summarize
+        </button>
+      </div>
+      <div class="home-examples">
+        <span class="home-examples-label">Es.</span>
+        <span class="example-chip" onclick="fillAndSummarize('6B_51/2021')">6B_51/2021</span>
+        <span class="example-chip" onclick="fillAndSummarize('4A_61/2024')">4A_61/2024</span>
+        <span class="example-chip" onclick="fillAndSummarize('105 II 16')">105 II 16</span>
+        <span class="example-chip" onclick="fillAndSummarize('6B_302/2023')">6B_302/2023</span>
+      </div>
+    </div>
+    <div id="homeError" style="margin-top:12px;font-size:13px;color:#c00;text-align:center;min-height:18px;"></div>
+  </div>
+</div>
+
+<!-- ── RESULTS LAYOUT ── -->
+<div class="results-layout" id="resultsLayout">
+  <div class="results-main">
+    <div class="cols-wrap">
+
+      <!-- CENTER: SUMMARY -->
+      <div class="col-results" id="colResults">
+        <!-- Sticky search bar -->
+        <div class="center-search-bar" id="centerSearchBar">
+          <div class="center-search-bar-inner">
+            <div class="csb-lang-btns">
+              <button class="csb-lang-btn active" id="csbLangIt" onclick="setCsbLang('it',this)">IT</button>
+              <button class="csb-lang-btn" id="csbLangDe" onclick="setCsbLang('de',this)">DE</button>
+              <button class="csb-lang-btn" id="csbLangFr" onclick="setCsbLang('fr',this)">FR</button>
+            </div>
+            <div class="csb-input-wrap">
+              <svg class="csb-input-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <input class="csb-input" id="centerInput" type="text"
+                placeholder="Nuovo codice…"
+                onkeydown="if(event.key==='Enter') doSearch(this.value)">
+            </div>
+            <button class="csb-btn" onclick="doSearch(document.getElementById('centerInput').value)">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+              Summarize
+            </button>
+          </div>
+        </div>
+
+        <!-- Maintenance banner -->
+        <div id="maintenance-banner">
+          <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
+          <span>Due to ongoing maintenance on our data provider, results may take longer than usual.</span>
+        </div>
+
+        <!-- Summary content -->
+        <div class="results-inner" id="summaryWrap"></div>
+      </div>
+
+      <!-- RIGHT PANEL -->
+      <div class="col-panel" id="colPanel">
+        <div class="panel-hd">
+          <div>
+            <div class="panel-label" id="panelLabel"></div>
+            <div class="panel-title" id="panelTitle"></div>
+          </div>
+          <button class="panel-close" onclick="closePanel()">×</button>
+        </div>
+        <div class="panel-body" id="panelBody"></div>
+      </div>
+
+    </div>
+  </div>
+</div><!-- /results-layout -->
+</div><!-- /app-container -->
+
+
+
+<div class="landing-sections" id="landingSections">
+
+<!-- ═══════════════════ HOW IT WORKS ═══════════════════ -->
+<section id="how">
+  <div class="container">
+    <div class="how-head">
+      <div class="section-tag reveal">How it works</div>
+      <h2 class="section-h2 reveal delay-1">Three steps.<br>One complete summary.</h2>
+      <p class="section-lead reveal delay-2">Our AI pipeline retrieves, reads, and summarizes any Swiss Federal Court decision — in your language of choice.</p>
+    </div>
+    <div class="steps-grid">
+      <div class="step-card reveal">
+        <div class="step-num">Step 01</div>
+        <div class="step-icon">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+            <circle cx="10" cy="10" r="8"/>
+            <path d="M10 6v4l3 2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </div>
+        <h3 class="step-title">Reference Lookup</h3>
+        <p class="step-desc">Enter any BGer or BGE case number. Our system immediately locates the official decision from the Swiss Federal Court repository at bger.ch.</p>
+      </div>
+      <div class="step-card reveal delay-2">
+        <div class="step-num">Step 02</div>
+        <div class="step-icon">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+            <path d="M4 6h12M4 10h8M4 14h5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3 class="step-title">Full Text Analysis</h3>
+        <p class="step-desc">The complete decision text is extracted and analyzed by our AI model, identifying the key facts, legal reasoning, and relevant statutory articles.</p>
+      </div>
+      <div class="step-card reveal delay-3">
+        <div class="step-num">Step 03</div>
+        <div class="step-icon">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="3" y="3" width="14" height="14" rx="2"/>
+            <path d="M7 8h6M7 11h4" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <h3 class="step-title">Structured Summary</h3>
+        <p class="step-desc">You receive a clear, structured summary in IT, DE or FR — covering the facts, the court's ruling, and a list of applicable legal articles.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════ NOTICE ═══════════════════ -->
+<section id="notice">
+  <div class="container">
+    <div class="notice-inner reveal">
+      <div class="notice-icon">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M9 1L1 16h16L9 1z" stroke-linejoin="round"/>
+          <path d="M9 7v4M9 13h.01" stroke-linecap="round"/>
+        </svg>
+      </div>
+      <h3 class="notice-title">Beta Feature</h3>
+      <p class="notice-text">Legal Summarization is currently under active development. AI-generated summaries may not always capture every nuance of a decision. Always verify critical findings against the original judgment on the official Swiss Federal Court repository.</p>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════ STATS ═══════════════════ -->
+<section id="stats">
+  <div class="container">
+    <div class="stats-grid">
+      <div class="stat-cell reveal">
+        <div class="stat-number">3</div>
+        <div class="stat-label">Languages</div>
+      </div>
+      <div class="stat-cell reveal delay-2">
+        <div class="stat-number">10<sup>s</sup></div>
+        <div class="stat-label">Average Summary Time</div>
+      </div>
+      <div class="stat-cell reveal delay-3">
+        <div class="stat-number">20<sup>×</sup></div>
+        <div class="stat-label">Faster Case Review</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════ CTA ═══════════════════ -->
+<section id="cta">
+  <div class="container">
+    <div class="cta-inner">
+      <img style="width:48px;height:48px;object-fit:contain;margin:0 auto 20px;display:block;"
+        class="reveal"
+        src="https://sententia.ch/wp-content/uploads/2025/02/IconOnly_NoBuffer-6-1024x1024.png"
+        alt="" aria-hidden="true">
+      <div class="section-tag reveal">Explore More</div>
+      <h2 class="cta-h reveal delay-1">Need to search<br>across cases?</h2>
+      <p class="cta-sub reveal delay-2">Use our Smart Search tool to find the most relevant Swiss Federal Court decisions matching your legal query — across all languages.</p>
+      <div class="cta-btns reveal delay-3">
+        <a href="https://sententia.ch/357-2/" class="btn-primary">
+          Try Smart Search
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path d="M1 11L11 1M11 1H4M11 1V8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </a>
+        <a href="https://sententia.ch/" class="btn-secondary">Back to Home</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+
+<!-- ═══════════════════ FOOTER ═══════════════════ -->
+<footer>
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <p>AI-powered Swiss legal research. Making Federal Supreme Court decisions accessible to every legal professional.</p>
+        <a href="mailto:sententia.ki@gmail.com" class="footer-email">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+            <rect x="1" y="3" width="12" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+            <path d="M1 4.5L7 8L13 4.5" stroke="currentColor" stroke-width="1.3"/>
+          </svg>
+          sententia.ki@gmail.com
+        </a>
+      </div>
+      <div class="footer-col">
+        <h5>Product</h5>
+        <ul>
+          <li><a href="https://sententia.ch/351-2/">Legal Summarization</a></li>
+          <li><a href="https://sententia.ch/357-2/">Smart Search</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Company</h5>
+        <ul>
+          <li><a href="https://sententia.ch/">Home</a></li>
+          <li><a href="https://sententia.ch/403-2/">About us</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h5>Legal</h5>
+        <ul>
+          <li><a href="https://sententia.ch/sententia-privacy.html">Privacy Policy</a></li>
+          <li><a href="https://sententia.ch/sententia-terms.html">Terms of Use</a></li>
+          <li><a href="#">Cookie Policy</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p class="footer-copy">© 2025 Sententia — All rights reserved</p>
+      <div class="footer-social">
+        <a href="#" aria-label="LinkedIn">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+            <path d="M2.5 1C1.67 1 1 1.67 1 2.5S1.67 4 2.5 4 4 3.33 4 2.5 3.33 1 2.5 1zM1.25 5.25H3.75V13H1.25V5.25zM5.25 5.25H7.65V6.38C8.05 5.73 8.93 5.1 10.25 5.1 12.5 5.1 13 6.6 13 8.5V13H10.5V9C10.5 8.08 10.48 6.9 9.2 6.9 7.9 6.9 7.7 7.9 7.7 8.93V13H5.25V5.25z"/>
+          </svg>
+        </a>
+        <a href="#" aria-label="Instagram">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true">
+            <rect x="1.5" y="1.5" width="11" height="11" rx="3"/>
+            <circle cx="7" cy="7" r="2.8"/>
+            <circle cx="10.5" cy="3.5" r="0.6" fill="currentColor" stroke="none"/>
+          </svg>
+        </a>
+        <a href="#" aria-label="Facebook">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor" aria-hidden="true">
+            <path d="M9 2.33H10.5V1H8.83C7.18 1 6.5 1.9 6.5 3.5V5H5V6.5H6.5V13H8V6.5H9.5L10 5H8V3.5C8 2.83 8.33 2.33 9 2.33z"/>
+          </svg>
+        </a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+</div><!-- /landing-sections -->
+
+
+<script>
+/* ── STATE ── */
+let currentCode = '';
+let currentLang = 'it';
+let currentData = null; // last API response
+let _fedUrl     = null;
+let _decisionId = '';   // OCL decision_id per full text diretto
+
+/* ── LANGUAGE ── */
+function setHomeLang(lang, btn) {
+  currentLang = lang;
+  document.querySelectorAll('.home-lang-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const placeholders = {
+    it:'Es. 6B_51/2021  oppure  105 II 16  o  4A_61/2024',
+    de:'Z.B. 6B_51/2021  oder  105 II 16  oder  4A_61/2024',
+    fr:'P.ex. 6B_51/2021  ou  105 II 16  ou  4A_61/2024',
+  };
+  document.getElementById('homeInput').placeholder = placeholders[lang];
+}
+function setCsbLang(lang, btn) {
+  currentLang = lang;
+  document.querySelectorAll('.csb-lang-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  // re-fetch with new language
+  if (currentCode) runSummarize(currentCode, lang);
+}
+
+/* ── FILL & SEARCH ── */
+function fillAndSummarize(code) {
+  document.getElementById('homeInput').value = code;
+  startSummarize();
+}
+function doSearch(code) {
+  code = code.trim();
+  if (!code) return;
+  document.getElementById('centerInput').value = '';
+  runSummarize(code, currentLang);
+}
+function startSummarize() {
+  const code = document.getElementById('homeInput').value.trim();
+  if (!code) return;
+  runSummarize(code, currentLang, true);
+}
+
+/* ── MAIN SUMMARIZE CALL ── */
+async function runSummarize(code, lang, fromHome = false) {
+  currentCode = code;
+  _decisionId = '';
+  _fedUrl = null;
+  closePanel();
+
+  const wrap = document.getElementById('summaryWrap');
+
+  // ── Transition to results view immediately (even from home) ──
+  if (fromHome) {
+    document.getElementById('homeWrap').style.display = 'none';
+    document.getElementById('resultsLayout').classList.add('active');
+    document.body.classList.add('summary-active');
+    setTimeout(() => {
+      const ls = document.getElementById('landingSections');
+      if (ls) ls.style.display = 'none';
+    }, 380);
+  }
+
+  // ── Progress bar (always shown) ──
+  wrap.innerHTML = `
+    <div class="sum-progress-wrap" id="sumProgressWrap">
+      <div class="sum-progress-header">Analysing <strong>${esc(code)}</strong>…</div>
+      <div class="sum-progress-track"><div class="sum-progress-fill" id="sumProgFill"></div></div>
+      <div class="sum-progress-step" id="sumProgStep"></div>
+    </div>`;
+  const _progress = _sumProgress(code, wrap);
+  document.getElementById('maintenance-banner').style.display = 'flex';
+
+  // ── Fetch summary: try local first, fallback to Render ──
+  let data;
+  const _fetchWithTimeout = (url, ms) => {
+    const ctrl = new AbortController();
+    const tid  = setTimeout(() => ctrl.abort(), ms);
+    return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(tid));
+  };
+
+  try {
+    try {
+      // Primary: local dev server
+      const localResp = await _fetchWithTimeout(
+        `http://localhost:8001/sintesi_federal?codice=${encodeURIComponent(code)}&lang=${encodeURIComponent(lang)}`,
+        5000  // 5 s — falls through immediately if not running locally
+      );
+      if (!localResp.ok) throw new Error(`local ${localResp.status}`);
+      const localData = await localResp.json();
+      if (localData.errore) throw new Error(localData.errore);
+      if (!localData.sintesi) throw new Error('no sintesi');
+      data = localData;
+      data._source = 'opencaselaw';
+    } catch (_localErr) {
+      // Fallback: Render (up to 120 s — includes cold-start time)
+      const renderResp = await _fetchWithTimeout(
+        `https://sententia-cantonal-api.onrender.com/sintesi_federal?codice=${encodeURIComponent(code)}&lang=${encodeURIComponent(lang)}`,
+        120000
+      );
+      if (!renderResp.ok) {
+        let errMsg = `Errore server (${renderResp.status})`;
+        try { const j = await renderResp.json(); if (j.errore) errMsg = j.errore; } catch(_){}
+        throw new Error(errMsg);
+      }
+      data = await renderResp.json();
+      if (data.errore) throw new Error(data.errore);
+      data._source = 'render';
+    }
+  } catch(_outerErr) {
+    _progress.fail();
+    document.getElementById('maintenance-banner').style.display = 'none';
+    const msg = _outerErr.name === 'AbortError'
+      ? 'Timeout: the server took too long. Please try again in a few seconds.'
+      : (_outerErr.message || 'Network error');
+    wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#c00;">
+      <strong>Error:</strong> ${esc(msg)}
+    </div>`;
+    return;
+  }
+  _progress.done();
+  document.getElementById('maintenance-banner').style.display = 'none';
+
+  try {
+    currentData = data;
+
+    if (!data.sintesi) throw new Error('No summary available for this reference.');
+
+    const dateSentenza = data.data_sentenza || data.data?.data_sentenza || data.date || '';
+    _decisionId = data.decision_id || '';
+    _fedUrl = costruisciUrlBger(code);
+
+    // Extract article tags from summary text
+    const arts = extractArticles(data.sintesi);
+    const artsHtml = arts.length
+      ? arts.map(a => `<span class="art-tag" data-art="${esc(a)}" onclick="openLaw('${esc(a)}',this)">${esc(a)}</span>`).join('')
+      : '<span style="font-size:12px;color:#ADADAD;">—</span>';
+
+    const sintesiHtml = renderSintesi(data.sintesi);
+    const tribunale = data.tribunale || data.tribunal || data.corte || '';
+
+    wrap.innerHTML = `
+      <div class="sum-card">
+        <div class="sum-card-head">
+          <div>
+            <div class="sum-card-date">${esc(code)}</div>
+            <div class="sum-card-meta" style="margin-top:6px">${dateSentenza ? esc(dateSentenza) : '—'}</div>
+            <div class="sum-card-meta" style="margin-top:2px">${tribunale ? esc(tribunale) : '—'}</div>
+          </div>
+          ${(_fedUrl || _decisionId) ? `<button class="btn-outline" style="flex-shrink:0;margin-top:2px;border-color:var(--black)" onclick="openDecision()">Full decision →</button>` : ''}
+        </div>
+        <div class="sum-card-toolbar">
+          <div class="sum-arts-row">
+            <span class="sum-arts-label">Articoli</span>
+            ${artsHtml}
+          </div>
+        </div>
+        <div class="sum-card-body">${sintesiHtml}</div>
+        <div style="padding:16px 32px 24px;text-align:right;border-top:1px solid var(--border)">
+          <button class="sum-action-btn" onclick="copySummary()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            Copia
+          </button>
+        </div>
+      </div>`;
+
+  } catch(e) {
+    if (fromHome) {
+      // Reset the home button on error so user can retry
+      const btn = document.querySelector('.home-input-btn');
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg> Summarize`;
+      }
+      // Show error below the search card
+      const homeError = document.getElementById('homeError');
+      if (homeError) homeError.textContent = `Errore: ${e.message}`;
+    } else {
+      wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#c00;">
+        <strong>Errore:</strong> ${esc(e.message)}
+      </div>`;
+    }
+  }
+}
+
+/* ── PROGRESS BAR CONTROLLER ── */
+const _SUM_STEPS = [
+  { pct:  6, delay:    0, msg: 'Connecting to the legal database…' },
+  { pct: 20, delay: 2200, msg: 'Locating the exact decision…' },
+  { pct: 38, delay: 5000, msg: 'Downloading the full text…' },
+  { pct: 54, delay: 9000, msg: 'Reading and analysing the decision…' },
+  { pct: 68, delay:14000, msg: 'Writing the AI summary…' },
+  { pct: 80, delay:27000, msg: 'Structuring the legal analysis…' },
+  { pct: 89, delay:45000, msg: 'Reviewing and formatting…' },
+  { pct: 94, delay:70000, msg: 'Almost there, one more moment…' },
+];
+
+function _sumProgress(code, wrap) {
+  const tids = [];
+  let done = false;
+
+  function _fill(pct, transMs) {
+    const el = wrap && wrap.querySelector('#sumProgFill');
+    if (!el) return;
+    el.style.transition = `width ${transMs}ms cubic-bezier(0.4,0,0.2,1)`;
+    el.style.width = pct + '%';
+  }
+  function _msg(text) {
+    const el = wrap && wrap.querySelector('#sumProgStep');
+    if (!el) return;
+    el.classList.remove('sps-on');
+    setTimeout(() => { el.textContent = text; el.classList.add('sps-on'); }, 120);
+  }
+
+  if (wrap) {
+    _SUM_STEPS.forEach(({ pct, delay, msg }) => {
+      tids.push(setTimeout(() => { if (!done) { _fill(pct, 1400); _msg(msg); } }, delay));
+    });
+  }
+
+  return {
+    done() {
+      done = true;
+      tids.forEach(clearTimeout);
+      _fill(100, 400);
+      const el = wrap && wrap.querySelector('#sumProgStep');
+      if (el) { el.classList.remove('sps-on'); }
+    },
+    fail() {
+      done = true;
+      tids.forEach(clearTimeout);
+    },
+  };
+}
+
+/* ── RENDER SINTESI (same as prototype) ── */
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function renderSintesi(text) {
+  const sezioni = text.split(/\n{2,}/);
+  return sezioni.map(sezione => {
+    const m = sezione.match(/^\*\*(.*?)\*\*\n?([\s\S]*)/);
+    if (m) {
+      const titolo = esc(m[1]);
+      const corpo = esc(m[2]).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>').trim();
+      return `<div class="sum-section-text"><strong class="sum-section-label">${titolo}</strong><p>${corpo}</p></div>`;
+    }
+    return `<p style="margin:0 0 18px">${esc(sezione).replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\n/g,'<br>')}</p>`;
+  }).join('');
+}
+
+/* ── EXTRACT ARTICLES ── */
+function extractArticles(text) {
+  const re = /[Aa]rt\.\s*\d+[a-z]*(?:\s+(?:[Cc]pv|[Aa]bs|[Aa]l|[Ll]et|[Ll]it)\.\s*\d+)?(?:\s+(?:CP|StGB|CO|OR|CPP|StPO|LTF|BGG|BV|Cost\.|Cst\.|ZPO|CPC|LPD|DSG|CC|ZGB))\b/g;
+  const found = text.match(re) || [];
+  // normalise: capitalise Art. and collapse spaces
+  return [...new Set(found.map(a => a.replace(/^art\./i,'Art.').replace(/\s+/g,' ').trim()))].slice(0,8);
+}
+
+/* ── PANEL ── */
+function openPanel(mode) {
+  const p = document.getElementById('colPanel');
+  p.classList.remove('open-art','open-dec');
+  p.classList.add(mode === 'dec' ? 'open-dec' : 'open-art');
+}
+function closePanel() {
+  document.getElementById('colPanel').classList.remove('open-art','open-dec');
+  document.querySelectorAll('.art-tag').forEach(t => t.classList.remove('active'));
+}
+
+/* ── OPEN FULL DECISION ── */
+async function openDecision() {
+  if (!_decisionId && !_fedUrl) return;
+  openPanel('dec');
+  document.getElementById('panelLabel').textContent = 'Full decision';
+  document.getElementById('panelTitle').textContent = currentCode;
+  document.getElementById('panelBody').innerHTML = `
+    <div style="text-align:center;padding:40px 0">
+      <div style="display:flex;justify-content:center;gap:5px;margin-bottom:14px">
+        <span class="sum-loading-dot"></span><span class="sum-loading-dot"></span><span class="sum-loading-dot"></span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted)">Loading full decision…</div>
+    </div>`;
+
+  try {
+    let html = '';
+
+    if (_decisionId) {
+      // Percorso principale: testo OCL via decision_id (funziona per federali E cantonali)
+      let data;
+      try {
+        const lr = await fetch(`http://localhost:8001/testo_decisione?decision_id=${encodeURIComponent(_decisionId)}`);
+        if (!lr.ok) throw new Error();
+        data = await lr.json();
+        if (data.errore) throw new Error(data.errore);
+      } catch(_) {
+        const rr = await fetch(`https://sententia-cantonal-api.onrender.com/testo_decisione?decision_id=${encodeURIComponent(_decisionId)}`);
+        if (!rr.ok) throw new Error(`HTTP ${rr.status}`);
+        data = await rr.json();
+        if (data.errore) throw new Error(data.errore);
+      }
+      html = data.html || '';
+    }
+
+    if (!html && _fedUrl) {
+      // Fallback: html_federale via bgerl.li (solo per sentenze federali senza decision_id)
+      let data;
+      try {
+        const lr = await fetch(`http://localhost:8001/html_federale?url=${encodeURIComponent(_fedUrl)}`);
+        if (!lr.ok) throw new Error();
+        data = await lr.json();
+        if (data.errore) throw new Error(data.errore);
+      } catch(_) {
+        const rr = await fetch(`https://sententia-cantonal-api.onrender.com/html_federale?url=${encodeURIComponent(_fedUrl)}`);
+        if (!rr.ok) throw new Error(`HTTP ${rr.status}`);
+        data = await rr.json();
+        if (data.errore) throw new Error(data.errore);
+      }
+      html = data.html || data.body || '';
+    }
+
+    if (!html) throw new Error('Testo non disponibile');
+
+    document.getElementById('panelBody').innerHTML = `
+      <div class="dec-meta">${esc(currentCode)}</div>
+      ${currentData?.data_sentenza ? `<div class="dec-date">${esc(currentData.data_sentenza)}</div>` : ''}
+      <div class="panel-iframe-wrap" style="margin:-22px;margin-top:12px;height:calc(100vh - 260px);">
+        <iframe style="width:100%;height:100%;border:none;" srcdoc="${escAttr(buildIframeSrc(html))}"></iframe>
+      </div>`;
+  } catch(e) {
+    document.getElementById('panelBody').innerHTML = `
+      <div class="dec-meta">${esc(currentCode)}</div>
+      <div style="color:#c00;font-size:13px;margin-top:16px">Errore: ${esc(e.message)}</div>`;
+  }
+}
+function escAttr(s) { return s.replace(/"/g,'&quot;'); }
+function buildIframeSrc(html) {
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+    *{box-sizing:border-box;max-width:100%!important;}
+    body{font-family:Verdana,Tahoma,sans-serif;font-size:13px;line-height:1.85;color:#222;padding:20px 22px;margin:0;}
+    h1,h2,h3{font-family:Georgia,serif;margin:.8em 0 .3em;}h1{font-size:17px;}h2{font-size:15px;}h3{font-size:13px;}
+    a{color:inherit;text-decoration:none;pointer-events:none;cursor:default;}p{margin:3px 0;}
+    table{border-collapse:collapse!important;width:100%!important;}td,th{padding:4px 6px;vertical-align:top;word-break:break-word;border:1px solid #e8e8e8;}
+    .pagetitle,.nav,header,footer,[id*="header"],[id*="footer"],[id*="nav"],[class*="nav"]{display:none!important;}
+    mark{background:#ffe066;padding:0 2px;border-radius:2px;font-weight:bold;}
+  </style></head><body>${html}</body></html>`;
+}
+
+/* ── FEDLEX ARTICLE TEXT PARSER ── */
+function renderArticleText(raw) {
+  let txt = raw
+    // Remove "Art. N[ref]" header line (footnote ref digits may be glued to number)
+    .replace(/^Art\.\s*\d+[a-z]*\d*\s*\n+/, '')
+    // Strip everything from first standalone 2+ digit footnote ref onwards
+    .replace(/\n\d{2,}\n[\s\S]*$/, '')
+    .trim();
+
+  const lines = txt.split('\n');
+  const out = [];
+  let pendingLetter = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (!t) continue;
+
+    // Lettered item marker alone on a line: a.  b.  abis.  etc.
+    if (/^[a-z]{1,4}\.$/.test(t)) { pendingLetter = t; continue; }
+
+    if (pendingLetter !== null) {
+      out.push(`<div class="art-list-item"><span class="art-list-ltr">${esc(pendingLetter)}</span><span class="art-list-txt">${esc(t)}</span></div>`);
+      pendingLetter = null;
+      continue;
+    }
+
+    // Numbered cpv: "1 text…"  "1bis text…"
+    const m = t.match(/^(\d+(?:[a-z]+)?)\s+(.+)/);
+    if (m) {
+      out.push(`<div class="art-cpv"><span class="art-cpv-n">${m[1]}</span><span class="art-cpv-t">${esc(m[2])}</span></div>`);
+      continue;
+    }
+
+    // Plain paragraph (preamble, introductory clause, etc.)
+    out.push(`<p class="art-para">${esc(t)}</p>`);
+  }
+
+  return `<div class="art-body">${out.join('')}</div>`;
+}
+
+/* ── OPEN LAW ARTICLE (via OCL /laws endpoint) ── */
+
+const SEARCH_API_SUM = 'https://sententia-cantonal-api.onrender.com';
+
+async function openLaw(artKey, tagEl) {
+  document.querySelectorAll('.art-tag').forEach(t => t.classList.remove('active'));
+  if (tagEl) tagEl.classList.add('active');
+
+  // Parse "Art. 53 CP", "Art. 1 cpv. 1 OR", "Art. 18 Abs. 2 StGB", etc. (case-insensitive cpv/abs)
+  const m = artKey.match(/[Aa]rt\.\s*(\d+[a-z]*)(?:\s+(?:[Cc]pv|[Aa]bs|[Aa]l|[Ll]et|[Ll]it)\.\s*\d+)?\s+([A-Z][A-Za-z.]+)/);
+  if (!m) return;
+  const artNum = m[1];
+  const sigla  = m[2];   // OCL risolve qualsiasi sigla direttamente
+
+  openPanel('art');
+  document.getElementById('panelLabel').textContent = 'Law article';
+  document.getElementById('panelTitle').textContent = artKey;
+
+  // Show loading spinner
+  document.getElementById('panelBody').innerHTML = `
+    <div style="text-align:center;padding:40px 0">
+      <div style="margin-bottom:12px">
+        <span class="sum-loading-dot"></span><span class="sum-loading-dot"></span><span class="sum-loading-dot"></span>
+      </div>
+      <div style="font-size:12px;color:var(--text-muted)">Loading…</div>
+    </div>`;
+
+  try {
+    const artQ = `articolo_ocl?sigla=${encodeURIComponent(sigla)}&art=${encodeURIComponent(artNum)}&lang=${encodeURIComponent(currentLang)}`;
+
+    let data;
+    try {
+      const r = await fetch(`http://localhost:8001/${artQ}`);
+      if (!r.ok) throw new Error();
+      data = await r.json();
+      if (data.errore) throw new Error(data.errore);
+    } catch(_) {
+      const r = await fetch(`${SEARCH_API_SUM}/${artQ}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      data = await r.json();
+      if (data.errore) throw new Error(data.errore);
+    }
+
+    const srNum    = data.sr_number || '';
+    const consDate = data.consolidation_date || '';
+    const txt      = (data.testo || '').trim();
+
+    document.getElementById('panelBody').innerHTML = `
+      <div class="dec-meta">${srNum ? 'SR ' + esc(srNum) : esc(sigla)}${consDate ? ` · ${esc(consDate)}` : ''}</div>
+      <hr class="law-divider">
+      ${renderArticleText(txt)}`;
+
+  } catch(e) {
+    const fedlexUrl = `https://www.fedlex.admin.ch/it/search?text=${encodeURIComponent(artKey)}`;
+    document.getElementById('panelBody').innerHTML = `
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
+        Testo non disponibile per <strong>${esc(sigla)}</strong> —
+        potrebbe trattarsi di una legge cantonale, abrogata o non ancora indicizzata.
+      </p>
+      <a href="${fedlexUrl}" target="_blank" style="font-size:12px;color:var(--c-text);font-weight:600;text-decoration:underline">
+        Cerca su Fedlex.admin.ch →
+      </a>`;
+  }
+}
+
+/* ── COPY ── */
+function copySummary() {
+  const el = document.querySelector('.sum-card-body');
+  if (!el) return;
+  navigator.clipboard.writeText(el.innerText)
+    .then(() => showToast('Copiato negli appunti'))
+    .catch(() => showToast('Errore durante la copia', true));
+}
+
+function showToast(msg, isErr) {
+  let t = document.getElementById('sumToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'sumToast';
+    t.style.cssText = 'position:fixed;bottom:28px;left:50%;transform:translateX(-50%) translateY(12px);background:var(--black);color:#fff;font-size:12px;font-weight:500;padding:9px 18px;border-radius:999px;opacity:0;transition:opacity 0.2s,transform 0.2s;pointer-events:none;z-index:9999;white-space:nowrap;';
+    document.body.appendChild(t);
+  }
+  if (isErr) t.style.background = '#c00';
+  else t.style.background = 'var(--black)';
+  t.textContent = msg;
+  t.style.opacity = '1'; t.style.transform = 'translateX(-50%) translateY(0)';
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => { t.style.opacity = '0'; t.style.transform = 'translateX(-50%) translateY(12px)'; }, 2200);
+}
+
+/* ── URL HELPERS ── */
+function isBvgerCode(c) { return /^[A-Z]-\d+\/\d{4}$/i.test(c.trim()); }
+function costruisciUrlBger(c) {
+  if (isBvgerCode(c)) return null;
+  return `https://bger.li/${c.trim().replace(/^BGE\s+/i,'').replace(/[\s\/]/g,'-')}`;
+}
+
+/* ── Nav scroll shadow ── */
+const _navEl = document.getElementById('nav');
+window.addEventListener('scroll', () => {
+  _navEl.classList.toggle('scrolled', window.scrollY > 12);
+}, { passive: true });
+
+/* ── Hamburger ── */
+const _hamburger = document.getElementById('hamburger');
+const _mobileMenu = document.getElementById('mobile-menu');
+if (_hamburger && _mobileMenu) {
+  _hamburger.addEventListener('click', () => {
+    const open = _hamburger.classList.toggle('open');
+    _mobileMenu.classList.toggle('open', open);
+    _hamburger.setAttribute('aria-expanded', open);
+  });
+}
+
+/* ── Scroll reveal ── */
+const _revealIO = new IntersectionObserver((entries) => {
+  entries.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add('visible'); _revealIO.unobserve(e.target); }
+  });
+}, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+document.querySelectorAll('.reveal').forEach(el => _revealIO.observe(el));
+// Hero elements animate in immediately on page load
+setTimeout(() => document.querySelectorAll('.hero-reveal').forEach(el => el.classList.add('visible')), 80);
+
+/* ── Parallax on landing hero ── */
+const _heroIconBg = document.querySelector('.hero-icon-bg');
+const _heroIconBgL = document.querySelector('.hero-icon-bg-left');
+window.addEventListener('scroll', () => {
+  const y = window.scrollY;
+  if (_heroIconBg)  _heroIconBg.style.transform  = `translateY(calc(-50% + ${y * 0.25}px))`;
+  if (_heroIconBgL) _heroIconBgL.style.transform = `translateY(${y * 0.15}px)`;
+}, { passive: true });
+</script>
+</body>
+</html>
