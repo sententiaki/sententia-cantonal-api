@@ -61,9 +61,10 @@ HTTP_HEADERS = {
 # Tribunali federali riconosciuti (tutto il resto è cantonale)
 _FEDERAL_COURT_KEYWORDS = {
     "bundesgericht", "tribunal fédéral", "tribunale federale",
-    "bundesverwaltungsgericht", "tribunal administratif fédéral",
-    "bundesstrafgericht", "tribunal pénal fédéral",
-    "bundespatentgericht", "bger", "bvger", "bstger", "bpatger",
+    "bundesverwaltungsgericht", "tribunal administratif fédéral", "tribunale amministrativo federale",
+    "bundesstrafgericht", "tribunal pénal fédéral", "tribunale penale federale",
+    "bundespatentgericht", "tribunale federale dei brevetti",
+    "bger", "bvger", "bstger", "bpatger",
 }
 
 def _rileva_tipo(court_raw: str) -> str:
