@@ -462,22 +462,14 @@ def espandi_codici_articolo(query: str) -> str:
 
 _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
 Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
-di sentenze federali svizzere (OpenCaseLaw).
+di sentenze federali svizzere.
 
 Regole:
-- Se la query contiene un riferimento ad un articolo di legge, DEVI sempre includere
-  le sigle equivalenti nelle tre lingue nazionali svizzere (italiano, francese, tedesco).
-  Esempio: "Art. 336 CO" → "Art. 336 CO OR" (CO=italiano/francese, OR=tedesco)
-  Esempio: "Art. 111 CP" → "Art. 111 CP StGB" (CP=italiano/francese, StGB=tedesco)
-  Esempio: "Art. 10 Cost." → "Art. 10 Cost. Cst. BV" (Cost.=IT, Cst.=FR, BV=DE)
-  Esempio: "Art. 88 LEF" → "Art. 88 LEF LP SchKG" (LEF=IT, LP=FR, SchKG=DE)
-  Esempio: "§ 111 StGB" → "Art. 111 StGB CP" (aggiungi equivalente IT/FR)
-  Questo vale per QUALSIASI legge federale svizzera, anche quelle meno comuni.
-  Il riferimento articolo deve apparire in primo piano nella query.
-- Per query basate solo su articoli, restituisci solo il riferimento trilingue (nessun concetto aggiuntivo).
-- Per query concettuali senza articoli, estrai 1–4 concetti giuridici chiave.
+- Se la query contiene riferimenti ad articoli di legge, mantienili ESATTAMENTE come sono.
+  NON aggiungere, modificare o tradurre sigle di legge — ci pensa il sistema.
+- Per query concettuali (senza articoli), estrai 1–4 concetti giuridici chiave.
+  Usa la stessa lingua della query (it/de/fr) o termini tecnici svizzeri standard.
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
-- Usa la lingua della query (it/de/fr) o termini giuridici standard svizzeri.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
@@ -485,7 +477,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
     # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN CODE"
     query_norm = pre_processa_query(query)
 
-    # 2. L'AI ottimizza E espande nelle 3 lingue (per qualsiasi legge federale svizzera)
+    # 2. L'AI ottimizza i concetti (NON tocca i codici legge)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
@@ -499,14 +491,14 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
         if m:
             d = json.loads(m.group())
             raw_opt = d.get("query_ottimizzata", query_norm)
-            # Normalizza l'output AI (formato articoli, sigle) ma NON ri-espandere:
-            # l'AI ha già incluso tutte le sigle nelle 3 lingue
-            final_opt = pre_processa_query(raw_opt)
+            # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
+            # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico
+            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
 
-    # Fallback se AI non disponibile: espansione hardcoded per i codici più comuni
+    # Fallback se AI non disponibile
     return espandi_codici_articolo(query_norm), "Query diretta"
 
 
@@ -774,35 +766,62 @@ def _es_normalize(hit: dict) -> dict:
     }
     court_name = _ES_COURT.get(court_key, court_key)
 
-    # Docket: estrai dall'_id nel formato entscheidsuche
-    # Esempi: CH_BGE_005_BGE-134-III-108_2008 → BGE 134 III 108
-    #         CH_BVGE_001_BVGE-2015-48_2015   → BVGE 2015/48
+    # ── Docket: estrai dall'_id di entscheidsuche ───────────────────────────
+    # Formati _id noti:
+    #   CH_BGE_005_BGE-134-III-108_2008   → BGE 134 III 108
+    #   CH_BVGER_001_BVGE-2015-48_2015    → BVGE 2015/48
+    #   CH_BGER_001_6B-302-2023_2023      → 6B_302/2023
+    #   CH_BVGER_007_F-2684-2026_2026     → F-2684/2026  (BVGer lettera-num-anno)
+    #   CH_BSTGER_001_SK.2023.1_2023      → SK.2023.1    (BStGer punto-anno-num)
+    #   CH_BSTGER_001_SK-2023-1_2023      → SK.2023.1    (stesso, trattini)
     title_it = (src.get("title") or {}).get("it", "")
     title_de = (src.get("title") or {}).get("de", "")
     title    = title_it or title_de or ""
-    # Pattern BGE/ATF nel formato _id: BGE-134-III-108
-    m_bge = re.search(r'\b(BGE|ATF)-(\d+)-([IVX]+)-(\d+)', doc_id, re.I)
-    # Pattern BVGE: BVGE-2015-48
-    m_bvge = re.search(r'\b(BVGE)-(\d{4})-(\d+)', doc_id, re.I)
-    # Pattern docket tipo 6B-302-2023 nell'_id
-    m_dkt = re.search(r'\b([1-9][A-Z]{0,3})-(\d+)-(\d{4})\b', doc_id)
+
+    m_bge    = re.search(r'\b(BGE|ATF)-(\d+)-([IVX]+)-(\d+)',   doc_id, re.I)
+    m_bvge   = re.search(r'\b(BVGE)-(\d{4})-(\d+)',             doc_id, re.I)
+    m_dkt    = re.search(r'\b([1-9][A-Z]{0,3})-(\d+)-(\d{4})\b', doc_id)        # 6B-302-2023
+    m_alpha  = re.search(r'\b([A-Z]{1,3})-(\d{3,6})-(\d{4})\b', doc_id)        # F-2684-2026
+    m_bstger = re.search(r'\b([A-Z]{2,4})-(20\d{2})-(\d+)\b',   doc_id)        # SK-2023-1
+    m_dot    = re.search(r'\b([A-Z]{2,4})\.(20\d{2})\.(\d+)\b', doc_id)        # SK.2023.1
+
     if m_bge:
         docket = f"BGE {m_bge.group(2)} {m_bge.group(3)} {m_bge.group(4)}"
     elif m_bvge:
         docket = f"BVGE {m_bvge.group(2)}/{m_bvge.group(3)}"
     elif m_dkt:
         docket = f"{m_dkt.group(1)}_{m_dkt.group(2)}/{m_dkt.group(3)}"
+    elif m_dot:
+        docket = f"{m_dot.group(1)}.{m_dot.group(2)}.{m_dot.group(3)}"
+    elif m_bstger:
+        docket = f"{m_bstger.group(1)}.{m_bstger.group(2)}.{m_bstger.group(3)}"
+    elif m_alpha:
+        docket = f"{m_alpha.group(1)}-{m_alpha.group(2)}/{m_alpha.group(3)}"
     else:
-        # Fallback: cerca nel titolo
+        # Fallback: cerca riferimento nel titolo, altrimenti estrai parte leggibile dall'_id
         m_title = re.search(r'BGE\s+(\d+\s+[IVX]+\s+\d+)', title, re.I)
-        docket = ("BGE " + m_title.group(1)) if m_title else doc_id[:60]
+        if m_title:
+            docket = "BGE " + m_title.group(1)
+        else:
+            # Prendi il 4° segmento dell'_id (es. CH_BGER_001_6B-302-2023_2023 → "6B-302-2023")
+            parts = doc_id.split('_')
+            docket = parts[3].replace('-', ' ') if len(parts) > 3 else doc_id[:50]
 
+    # ── URL: per BGE usa bger.li (HTML pulito garantito);
+    #         per gli altri usa content_url dall'indice ES ───────────────────
     attachment = src.get("attachment") or {}
-    url        = attachment.get("content_url", "")
     full_text  = (attachment.get("content") or "").strip()
     abstract   = ((src.get("abstract") or {}).get("it")
                or (src.get("abstract") or {}).get("de")
                or (src.get("abstract") or {}).get("fr") or "")
+    if m_bge:
+        # BGE → bger.li: URL stabile, HTML leggibile, funziona con /html_federale
+        url = costruisci_url_bger(docket)
+    else:
+        url = attachment.get("content_url", "")
+        if not url:
+            # Ultimo tentativo: bger.li per tutto il federale (potrebbe non funzionare per BVGer/BStGer)
+            url = costruisci_url_bger(docket)
 
     return {
         "docket_number":  docket,
