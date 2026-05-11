@@ -462,13 +462,17 @@ def espandi_codici_articolo(query: str) -> str:
 
 _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
 Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
-di sentenze federali svizzere.
+di sentenze federali svizzere (Elasticsearch multilingue IT/FR/DE).
 
 Regole:
 - Se la query contiene riferimenti ad articoli di legge, mantienili ESATTAMENTE come sono.
   NON aggiungere, modificare o tradurre sigle di legge — ci pensa il sistema.
-- Per query concettuali (senza articoli), estrai 1–4 concetti giuridici chiave.
-  Usa la stessa lingua della query (it/de/fr) o termini tecnici svizzeri standard.
+- Per query concettuali (senza articoli), fornisci i concetti chiave nelle TRE lingue
+  nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
+  Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
+  Esempio: "licenziamento abusivo" → "licenziamento abusivo | missbräuchliche Kündigung | licenciement abusif"
+  Esempio: "responsabilità civile" → "responsabilità civile | Haftpflicht | responsabilité civile"
+  Esempio: "diritto d'autore" → "diritto d'autore | Urheberrecht | droit d'auteur"
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
@@ -844,7 +848,7 @@ async def _entscheidsuche_search(
         "query": {
             "simple_query_string": {
                 "query": query,
-                "default_operator": "and",
+                "default_operator": "or",
             }
         },
         "size": limit,
