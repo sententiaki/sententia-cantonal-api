@@ -1086,8 +1086,14 @@ async def cerca_stream(
 
                 # entscheidsuche primario (veloce, affidabile) — OCL fallback se ES torna vuoto
                 es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
-                # Federal IDs start with CH_ (CH_BGE, CH_BVGE, CH_BSTGE, CH_BPATGE)
-                hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
+                # Federal IDs start with CH_; filter based on requested court mode
+                if tipo_filter == "cantonal":
+                    hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
+                elif tipo_filter == "all":
+                    hits = list(es_hits)  # federal + cantonal, no filter
+                else:
+                    # federal (default, None, or "federal")
+                    hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
                 if not hits:
                     log.info("ES returned 0, falling back to OCL")
                     hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
