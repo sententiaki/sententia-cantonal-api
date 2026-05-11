@@ -797,9 +797,9 @@
           <div class="filter-section">
             <div class="filter-section-title">Court</div>
             <div class="court-pill-group">
-              <button class="court-pill" id="courtAll" onclick="setCourt('all')">All courts</button>
+              <button class="court-pill active" id="courtAll" onclick="setCourt('all')">All courts</button>
 
-              <button class="court-pill active" id="courtFedBtn" onclick="setCourt('fed')">Federal</button>
+              <button class="court-pill" id="courtFedBtn" onclick="setCourt('fed')">Federal</button>
               <div class="court-sub-items open" id="fedSubItems">
                 <div class="court-sub-item" id="trib-bger"></div>
                 <div class="court-sub-item" id="trib-bvger"></div>
@@ -1159,7 +1159,7 @@ const SEARCH_API = 'https://sententia-cantonal-api.onrender.com';
 let allLoaded = [];
 let panelMode = null;
 let filtersCollapsed = false;
-let courtMode = 'fed';  // 'all' | 'fed' | 'can'
+let courtMode = 'all';  // 'all' | 'fed' | 'can'
 
 const _TRIB_LABELS = {
   it: { bger:'Tribunale federale', bvger:'Trib. amm. federale', bstger:'Trib. penale federale' },

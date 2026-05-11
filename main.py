@@ -752,7 +752,15 @@ def _es_normalize(hit: dict) -> dict:
     src       = hit.get("_source", {})
     doc_id    = hit.get("_id", "")
     hierarchy = src.get("hierarchy", [])
-    court_key = hierarchy[0].upper() if hierarchy else ""
+    # Extract court key from doc_id parts:
+    #   CH_BVGE_001_...  → parts[1] = "BVGE"  (federal: use position 1)
+    #   GR_VG_001_...    → parts[0] = "GR"    (cantonal: use position 0)
+    # hierarchy[0] = "CH" for all federal courts → useless for court identification
+    id_parts  = doc_id.split("_")
+    if len(id_parts) > 1 and id_parts[0].upper() == "CH":
+        court_key = id_parts[1].upper()   # BGER, BVGE, BGE, BSTGER, BPATGER
+    else:
+        court_key = (id_parts[0] if id_parts else (hierarchy[0] if hierarchy else "")).upper()
 
     # Mappa gerarchia → nome tribunale leggibile
     _ES_COURT = {
