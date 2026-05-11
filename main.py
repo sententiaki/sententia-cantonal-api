@@ -1243,6 +1243,11 @@ async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
         if resp.status_code in (404, 410):
             return ""
         resp.raise_for_status()
+        # Salta i PDF (binario non parsabile come HTML)
+        ct = resp.headers.get("content-type", "")
+        if "pdf" in ct or resp.content[:5] == b"%PDF-":
+            log.info("Skipping PDF content for %s", url)
+            return ""
         # Verifica che il redirect finale porti a un dominio svizzero noto
         final_host = str(resp.url.host).lower()
         if final_host not in _VALID_BGER_DOMAINS:
@@ -1516,6 +1521,11 @@ async def html_federale(
             resp.raise_for_status()
         except Exception as exc:
             return JSONResponse({"errore": f"Download fallito: {exc}"}, status_code=502)
+
+    # Rileva PDF: restituisce errore con link diretto invece di binario grezzo
+    ct = resp.headers.get("content-type", "")
+    if "pdf" in ct or resp.content[:5] == b"%PDF-":
+        return JSONResponse({"errore": "pdf", "pdf_url": url}, status_code=200)
 
     soup = BeautifulSoup(resp.text, "html.parser")
     for tag in soup.find_all(["nav", "header", "footer", "script", "style",

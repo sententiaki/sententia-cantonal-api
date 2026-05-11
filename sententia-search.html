@@ -1722,12 +1722,18 @@ async function openDecision(idx) {
         const lr = await fetch(`http://localhost:8001/html_federale?url=${encodeURIComponent(r.url)}`);
         if (!lr.ok) throw new Error();
         data = await lr.json();
-        if (data.errore) throw new Error(data.errore);
+        if (data.errore && data.errore !== 'pdf') throw new Error(data.errore);
       } catch(_) {
         const rr = await fetch(`${SEARCH_API}/html_federale?url=${encodeURIComponent(r.url)}`);
         if (!rr.ok) throw new Error(`HTTP ${rr.status}`);
         data = await rr.json();
-        if (data.errore) throw new Error(data.errore);
+        if (data.errore && data.errore !== 'pdf') throw new Error(data.errore);
+      }
+      // Se il documento è un PDF, apri direttamente in una nuova tab
+      if (data && data.errore === 'pdf') {
+        window.open(data.pdf_url, '_blank', 'noopener');
+        closePanel();
+        return;
       }
       html = data.html || data.body || '';
     }
