@@ -1346,7 +1346,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         bger_url = costruisci_url_bger(codice)
         full_text = await _fetch_bger_text(bger_url, http)
         if full_text:
-            hit = {"docket_number": codice, "court_name": "BGer", "decision_date": ""}
+            hit = {"docket_number": codice, "court_name": "BGer", "decision_date": "", "url": bger_url}
             log.info("bger.li OK for '%s': %s", codice, bger_url)
         else:
             # ── 2. Fallback ES: cerca su entscheidsuche per numero di ruolo ────
@@ -1396,6 +1396,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         "source":        source,
         "statutes":      hit.get("statutes") or [],
         "decision_id":   hit.get("decision_id", decision_id),
+        "url":           hit.get("url", ""),
     })
 
 @app.get("/sintesi_federal")

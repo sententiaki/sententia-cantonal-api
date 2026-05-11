@@ -1020,7 +1020,8 @@ async function runSummarize(code, lang, fromHome = false) {
 
     const dateSentenza = data.data_sentenza || data.data?.data_sentenza || data.date || '';
     _decisionId = data.decision_id || '';
-    _fedUrl = costruisciUrlBger(code);
+    // Usa l'URL dalla risposta API (bger.li o URL ES per cantonali); fallback a bger.li costruito
+    _fedUrl = data.url || costruisciUrlBger(code);
 
     // Extract article tags from summary text
     const arts = extractArticles(data.sintesi);
@@ -1196,20 +1197,25 @@ async function openDecision() {
     }
 
     if (!html && _fedUrl) {
-      // Fallback: html_federale via bgerl.li (solo per sentenze federali senza decision_id)
-      let data;
+      // Carica via /html_federale (funziona per bger.li, URL ES, PDF)
+      let fdata;
       try {
         const lr = await fetch(`http://localhost:8001/html_federale?url=${encodeURIComponent(_fedUrl)}`);
         if (!lr.ok) throw new Error();
-        data = await lr.json();
-        if (data.errore) throw new Error(data.errore);
+        fdata = await lr.json();
       } catch(_) {
         const rr = await fetch(`https://sententia-cantonal-api.onrender.com/html_federale?url=${encodeURIComponent(_fedUrl)}`);
         if (!rr.ok) throw new Error(`HTTP ${rr.status}`);
-        data = await rr.json();
-        if (data.errore) throw new Error(data.errore);
+        fdata = await rr.json();
       }
-      html = data.html || data.body || '';
+      // PDF: mostra inline invece di aprire in nuova tab
+      if (fdata && fdata.errore === 'pdf') {
+        document.getElementById('panelBody').innerHTML =
+          `<iframe src="${esc(fdata.pdf_url)}" style="width:100%;height:calc(100vh - 220px);min-height:500px;border:none;display:block"></iframe>`;
+        return;
+      }
+      if (fdata && fdata.errore) throw new Error(fdata.errore);
+      html = fdata?.html || fdata?.body || '';
     }
 
     if (!html) throw new Error('Testo non disponibile');
