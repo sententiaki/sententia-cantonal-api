@@ -1299,6 +1299,29 @@ function expandToSearch() {
   setTimeout(() => document.getElementById('centerInput').focus(), 650);
 }
 
+/* ── COURT NAME MAP (full names in all 3 languages) ── */
+const _COURT_NAMES = {
+  bger:    { it: 'Tribunale federale',                de: 'Bundesgericht',              fr: 'Tribunal fédéral' },
+  bvger:   { it: 'Tribunale amministrativo federale', de: 'Bundesverwaltungsgericht',   fr: 'Tribunal administratif fédéral' },
+  bstger:  { it: 'Tribunale penale federale',         de: 'Bundesstrafgericht',         fr: 'Tribunal pénal fédéral' },
+  bpatger: { it: 'Tribunale federale dei brevetti',   de: 'Bundespatentgericht',        fr: 'Tribunal fédéral des brevets' },
+};
+const _CANTON_NAMES = {
+  ti: { it: 'Ticino',   de: 'Tessin', fr: 'Tessin'  },
+  zh: { it: 'Zurigo',   de: 'Zürich', fr: 'Zurich'  },
+  be: { it: 'Berna',    de: 'Bern',   fr: 'Berne'   },
+  ge: { it: 'Ginevra',  de: 'Genf',   fr: 'Genève'  },
+  vd: { it: 'Vaud',     de: 'Waadt',  fr: 'Vaud'    },
+};
+function courtFullName(r, lang) {
+  const l = lang || 'it';
+  if (r.tribunal_key && _COURT_NAMES[r.tribunal_key])
+    return _COURT_NAMES[r.tribunal_key][l] || _COURT_NAMES[r.tribunal_key]['it'];
+  if (r.canton_key && _CANTON_NAMES[r.canton_key])
+    return (_COURT_NAMES['cantonal']?.[l] || 'Tribunale cantonale') + ' — ' + (_CANTON_NAMES[r.canton_key][l] || r.canton_key.toUpperCase());
+  return r.tribunal || '—';
+}
+
 /* ── LANGUAGE HELPERS ── */
 function getActiveLang() {
   const r = document.querySelector('input[name="lang"]:checked');
@@ -1508,8 +1531,8 @@ function buildCard(r) {
     <div class="result-header">
       <div class="result-header-left">
         <span class="result-index">${r.rank}</span>
-        <span class="result-code">${r.code}</span>
-        <span class="result-tribunal">${r.tribunal}</span>
+        <span class="result-code">${r.code || '—'}</span>
+        <span class="result-tribunal">${courtFullName(r, lang)}</span>
         ${citBadge}
       </div>
       <span class="result-date">${r.date}</span>
@@ -1729,10 +1752,10 @@ async function openDecision(idx) {
         data = await rr.json();
         if (data.errore && data.errore !== 'pdf') throw new Error(data.errore);
       }
-      // Se il documento è un PDF, apri direttamente in una nuova tab
+      // Se il documento è un PDF, mostralo inline nel pannello
       if (data && data.errore === 'pdf') {
-        window.open(data.pdf_url, '_blank', 'noopener');
-        closePanel();
+        document.getElementById('panelBody').innerHTML =
+          `<iframe src="${esc(data.pdf_url)}" style="width:100%;height:100%;min-height:600px;border:none;display:block"></iframe>`;
         return;
       }
       html = data.html || data.body || '';
@@ -1750,7 +1773,7 @@ async function openDecision(idx) {
     </style></head><body>${html}</body></html>`.replace(/"/g,'&quot;');
 
     document.getElementById('panelBody').innerHTML = `
-      <div class="dec-meta">${esc(r.code)} · ${esc(r.tribunal)}</div>
+      <div class="dec-meta">${esc(r.code || '—')} · ${esc(courtFullName(r, getActiveLang()))}</div>
       <div class="dec-date">${esc(r.date)}</div>
       <div style="margin:-20px;margin-top:12px;height:calc(100vh - 220px);">
         <iframe style="width:100%;height:100%;border:none;" srcdoc="${iframeSrc}"></iframe>
@@ -1804,7 +1827,7 @@ async function openSummarize(idx) {
     const artTagsHtml = arts.map(a=>`<span class="art-tag" data-key="${esc(a)}" onclick="openLaw('${esc(a)}',this)">${esc(a)}</span>`).join('');
 
     document.getElementById('panelBody').innerHTML = `
-      <div class="dec-meta">${esc(r.code)} · ${esc(r.tribunal)}</div>
+      <div class="dec-meta">${esc(r.code || '—')} · ${esc(courtFullName(r, getActiveLang()))}</div>
       <div class="dec-date">${esc(r.date)}</div>
       <span class="sum-ai-badge">✦ AI Summary</span>
       <hr class="law-divider">

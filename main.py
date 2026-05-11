@@ -802,14 +802,24 @@ def _es_normalize(hit: dict) -> dict:
     elif m_alpha:
         docket = f"{m_alpha.group(1)}-{m_alpha.group(2)}/{m_alpha.group(3)}"
     else:
-        # Fallback: cerca riferimento nel titolo, altrimenti estrai parte leggibile dall'_id
+        # Fallback: cerca riferimento nel titolo ES, altrimenti estrai dall'_id
         m_title = re.search(r'BGE\s+(\d+\s+[IVX]+\s+\d+)', title, re.I)
         if m_title:
             docket = "BGE " + m_title.group(1)
         else:
-            # Prendi il 4° segmento dell'_id (es. CH_BGER_001_6B-302-2023_2023 → "6B-302-2023")
-            parts = doc_id.split('_')
-            docket = parts[3].replace('-', ' ') if len(parts) > 3 else doc_id[:50]
+            # Cerca qualsiasi numero di docket nel titolo (es. "SK.2022.45", "6B_302/2023")
+            m_title_any = re.search(
+                r'\b([A-Z]{1,4}[._-]\d{2,4}[._/]\d+|[1-9][A-Z]{0,3}[._]\d+[/._]\d{4})\b',
+                title, re.I,
+            )
+            if m_title_any:
+                docket = m_title_any.group(1)
+            else:
+                # Ultimo tentativo: 4° segmento dell'_id
+                parts = doc_id.split('_')
+                raw = parts[3] if len(parts) > 3 else doc_id[:50]
+                # Se è solo lettere (camera senza numero), usa l'_id più leggibile
+                docket = raw if re.search(r'\d', raw) else doc_id.replace('_', ' ').strip()
 
     # ── URL: per BGE usa bger.li (HTML pulito garantito);
     #         per gli altri usa content_url dall'indice ES ───────────────────
