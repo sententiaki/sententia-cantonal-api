@@ -774,21 +774,28 @@ def _es_normalize(hit: dict) -> dict:
     }
     court_name = _ES_COURT.get(court_key, court_key)
 
-    # Docket: estrai dal titolo o dall'_id
+    # Docket: estrai dall'_id nel formato entscheidsuche
+    # Esempi: CH_BGE_005_BGE-134-III-108_2008 → BGE 134 III 108
+    #         CH_BVGE_001_BVGE-2015-48_2015   → BVGE 2015/48
     title_it = (src.get("title") or {}).get("it", "")
     title_de = (src.get("title") or {}).get("de", "")
     title    = title_it or title_de or ""
-    # Cerca "BGE NNN [IVX]+ NNN" nel titolo
-    m_bge = re.search(r'BGE\s+(\d+\s+[IVX]+\s+\d+)', title, re.I)
-    # Cerca codice tipo "6B_302/2023" nell'_id o nel titolo
-    m_dkt = re.search(r'\b([1-9][A-Z]{0,3}[_/]\d+[/_]\d{4})\b', doc_id + " " + title)
+    # Pattern BGE/ATF nel formato _id: BGE-134-III-108
+    m_bge = re.search(r'\b(BGE|ATF)-(\d+)-([IVX]+)-(\d+)', doc_id, re.I)
+    # Pattern BVGE: BVGE-2015-48
+    m_bvge = re.search(r'\b(BVGE)-(\d{4})-(\d+)', doc_id, re.I)
+    # Pattern docket tipo 6B-302-2023 nell'_id
+    m_dkt = re.search(r'\b([1-9][A-Z]{0,3})-(\d+)-(\d{4})\b', doc_id)
     if m_bge:
-        docket = "BGE " + m_bge.group(1)
+        docket = f"BGE {m_bge.group(2)} {m_bge.group(3)} {m_bge.group(4)}"
+    elif m_bvge:
+        docket = f"BVGE {m_bvge.group(2)}/{m_bvge.group(3)}"
     elif m_dkt:
-        docket = m_dkt.group(1).replace("_", "/")
+        docket = f"{m_dkt.group(1)}_{m_dkt.group(2)}/{m_dkt.group(3)}"
     else:
-        # Fallback: usa _id pulito
-        docket = doc_id.replace("_", " ").strip()[:60]
+        # Fallback: cerca nel titolo
+        m_title = re.search(r'BGE\s+(\d+\s+[IVX]+\s+\d+)', title, re.I)
+        docket = ("BGE " + m_title.group(1)) if m_title else doc_id[:60]
 
     attachment = src.get("attachment") or {}
     url        = attachment.get("content_url", "")
@@ -1043,9 +1050,9 @@ async def cerca_stream(
                 if not hits:
                     log.info("OCL returned 0, using entscheidsuche fallback (federal only)")
                     es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
-                    _ES_FEDERAL = {"BGER", "BGE", "BVGER", "BSTGER", "BPATGER"}
+                    # Federal IDs start with CH_ (CH_BGE, CH_BVGE, CH_BSTGE, CH_BPATGE)
                     hits = [h for h in es_hits
-                            if (h.get("_es_id") or "").split("_")[0].upper() in _ES_FEDERAL]
+                            if (h.get("_es_id") or "").startswith("CH_")]
 
                 # Filtro anno
                 if anno_da or anno_a:
