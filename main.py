@@ -924,7 +924,14 @@ async def _elabora_risultato(
     """Scarica il testo completo e genera il riassunto per un singolo risultato."""
     meta  = _hit_to_meta(hit, rank)
     # Se il testo è già incluso (entscheidsuche), non serve un secondo fetch
-    testo = hit.get("_es_text") or await _ocl_full_text(meta["decision_id"], http)
+    es_text = hit.get("_es_text") or ""
+    if es_text:
+        testo = es_text
+    elif meta["decision_id"]:
+        testo = await _ocl_full_text(meta["decision_id"], http)
+    else:
+        # ES hit senza testo precaricato: scarica direttamente da bger.li
+        testo = await _fetch_bger_text(meta["url"], http) if meta.get("url") else ""
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
     # Priorità articoli: campo statutes strutturato di OCL → testo completo → riassunto
     ocl_statutes = meta.pop("ocl_statutes", [])
@@ -1044,15 +1051,14 @@ async def cerca_stream(
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # OCL primario — entscheidsuche fallback (solo federale) se OCL torna vuoto
-                hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
-                                         language=ocl_lang, offset=offset)
+                # entscheidsuche primario (veloce, affidabile) — OCL fallback se ES torna vuoto
+                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
+                # Federal IDs start with CH_ (CH_BGE, CH_BVGE, CH_BSTGE, CH_BPATGE)
+                hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
                 if not hits:
-                    log.info("OCL returned 0, using entscheidsuche fallback (federal only)")
-                    es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
-                    # Federal IDs start with CH_ (CH_BGE, CH_BVGE, CH_BSTGE, CH_BPATGE)
-                    hits = [h for h in es_hits
-                            if (h.get("_es_id") or "").startswith("CH_")]
+                    log.info("ES returned 0, falling back to OCL")
+                    hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
+                                             language=ocl_lang, offset=offset)
 
                 # Filtro anno
                 if anno_da or anno_a:
