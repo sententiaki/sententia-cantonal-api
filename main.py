@@ -1119,8 +1119,12 @@ async def cerca_stream(
                     return h.get("court_name") or h.get("court") or ""
 
                 # Filtro tipo (federal / cantonal)
+                # ES hits already pre-filtered by CH_ prefix — skip redundant _rileva_tipo check.
+                # Only apply to OCL fallback results (which have no _es_id).
                 if tipo_filter in ("federal", "cantonal"):
-                    hits = [h for h in hits if _rileva_tipo(_court(h)) == tipo_filter]
+                    hits = [h for h in hits
+                            if h.get("_es_id")  # ES: already filtered correctly above
+                            or _rileva_tipo(_court(h)) == tipo_filter]
 
                 # Filtro tribunale specifico (bger / bvger / bstger)
                 if tribunal_filter:
