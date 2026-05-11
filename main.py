@@ -1337,72 +1337,38 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         }
         return JSONResponse({"errore": _invalid_msg[lang]}, status_code=400)
 
-    source = "opencaselaw.ch"
+    source = "bger.li"
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
         hit: dict = {}
         full_text = ""
 
-        if decision_id:
-            # Percorso veloce: abbiamo già decision_id, recupera testo direttamente
-            full_text = await _ocl_full_text(decision_id, http)
-            # Cerca comunque i metadati (per tribunale, data, statutes)
-            hits_meta = await _ocl_search(codice, 1, http)
-            hit = hits_meta[0] if hits_meta else {}
+        # ── 1. bger.li: accesso diretto tramite URL costruita dal codice ────────
+        bger_url = costruisci_url_bger(codice)
+        full_text = await _fetch_bger_text(bger_url, http)
+        if full_text:
+            hit = {"docket_number": codice, "court_name": "BGer", "decision_date": ""}
+            log.info("bger.li OK for '%s': %s", codice, bger_url)
         else:
-            # ── 1. OCL: ricerca semantica con match esatto sul docket_number ──
+            # ── 2. Fallback ES: cerca su entscheidsuche per numero di ruolo ────
+            log.info("bger.li miss for '%s', trying entscheidsuche", codice)
+            source = "entscheidsuche.ch"
             norm_input = _normalize_codice(codice)
-
-            def _find_exact(hits: list[dict]) -> list[dict]:
-                return [h for h in hits
-                        if _normalize_codice(
-                            h.get("docket_number") or h.get("file_number") or ""
-                        ) == norm_input]
-
-            # Prova varianti di query per massimizzare la copertura OCL:
-            # 1. codice senza prefisso tribunale (es. 'BVGer F-2684/2026' → 'F-2684/2026')
-            #    → messo PRIMO perché più preciso per OCL
-            # 2. originale
-            # 3. separatori → spazio
-            bare_codice = re.sub(
-                r'^(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+', '',
-                codice, flags=re.IGNORECASE,
-            ).strip()
-            queries = [bare_codice] if bare_codice != codice else [codice]
-            if codice not in queries:
-                queries.append(codice)
-            alt_sep = re.sub(r'[/_\-]', ' ', codice).strip()
-            if alt_sep not in queries:
-                queries.append(alt_sep)
-            alt_bare = re.sub(r'[\s_\-/]', '', bare_codice)
-            if alt_bare not in queries:
-                queries.append(alt_bare)
-
-            exact: list[dict] = []
-            for q in queries:
-                hits_q = await _ocl_search(q, 20, http)
-                exact = _find_exact(hits_q)
-                if exact:
-                    break
-
-            if exact:
-                # Match esatto trovato su OCL
-                hit = exact[0]
-                full_text = await _ocl_full_text(hit.get("decision_id", ""), http)
+            es_hits = await _entscheidsuche_search(codice, 10, http)
+            # Preferisce match esatto sul docket number, altrimenti il primo risultato
+            exact = [h for h in es_hits
+                     if _normalize_codice(h.get("docket_number") or "") == norm_input]
+            best = exact[0] if exact else (es_hits[0] if es_hits else None)
+            if best:
+                full_text = best.get("_es_text") or ""
+                if not full_text and best.get("url"):
+                    full_text = await _fetch_bger_text(best["url"], http)
+                hit = best
+                log.info("ES fallback OK for '%s': docket=%s", codice, best.get("docket_number"))
             else:
-                # ── 2. Fallback bger.li: fetch diretto per URL costruita dal codice ──
-                # OCL è ricerca semantica e non garantisce di restituire la decisione
-                # esatta — bger.li permette accesso diretto via codice.
-                bger_url = costruisci_url_bger(codice)
-                full_text = await _fetch_bger_text(bger_url, http)
-                if full_text:
-                    hit = {"docket_number": codice, "court_name": "BGer", "decision_date": ""}
-                    source = "bger.li"
-                    log.info("bger.li fallback for '%s': %s", codice, bger_url)
-                else:
-                    return JSONResponse(
-                        {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
-                        status_code=404,
-                    )
+                return JSONResponse(
+                    {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
+                    status_code=404,
+                )
 
     if len(full_text) < 100:
         return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
