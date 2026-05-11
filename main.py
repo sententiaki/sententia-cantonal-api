@@ -731,7 +731,7 @@ async def _ocl_search(
             r = await http.get(
                 f"{OPENCASELAW_BASE}/decisions",
                 params=params,
-                timeout=8.0,
+                timeout=5.0,
             )
             r.raise_for_status()
             d = r.json()
@@ -742,6 +742,7 @@ async def _ocl_search(
                 continue
             log.error("OCL search timeout (attempt 2), giving up: %s", query[:80])
             return []
+
         except Exception as exc:
             log.error("OCL search error: %s", repr(exc))
             return []
