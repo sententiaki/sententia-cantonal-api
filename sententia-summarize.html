@@ -557,9 +557,7 @@
     cursor:pointer; transition:border-color 0.15s,color 0.15s;
   }
   .sum-action-btn:hover { border-color:#999; color:var(--black); }
-  /* Maintenance banner */
-  #maintenance-banner { display:none; align-items:center; gap:10px; background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:10px 16px; margin:0 0 18px; font-size:12px; color:#92400e; }
-  #maintenance-banner svg { flex-shrink:0; opacity:0.7; }
+
 </style>
 </head>
 <body>
@@ -681,12 +679,6 @@
               Summarize
             </button>
           </div>
-        </div>
-
-        <!-- Maintenance banner -->
-        <div id="maintenance-banner">
-          <svg width="15" height="15" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clip-rule="evenodd"/></svg>
-          <span>Due to ongoing maintenance on our data provider, results may take longer than usual.</span>
         </div>
 
         <!-- Summary content -->
@@ -961,7 +953,6 @@ async function runSummarize(code, lang, fromHome = false) {
       <div class="sum-progress-step" id="sumProgStep"></div>
     </div>`;
   const _progress = _sumProgress(code, wrap);
-  document.getElementById('maintenance-banner').style.display = 'flex';
 
   // ── Fetch summary: try local first, fallback to Render ──
   let data;
@@ -1001,8 +992,7 @@ async function runSummarize(code, lang, fromHome = false) {
     }
   } catch(_outerErr) {
     _progress.fail();
-    document.getElementById('maintenance-banner').style.display = 'none';
-    const msg = _outerErr.name === 'AbortError'
+      const msg = _outerErr.name === 'AbortError'
       ? 'Timeout: the server took too long. Please try again in a few seconds.'
       : (_outerErr.message || 'Network error');
     wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#c00;">
@@ -1011,7 +1001,6 @@ async function runSummarize(code, lang, fromHome = false) {
     return;
   }
   _progress.done();
-  document.getElementById('maintenance-banner').style.display = 'none';
 
   try {
     currentData = data;
