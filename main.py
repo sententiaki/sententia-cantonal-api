@@ -466,14 +466,16 @@ Trasforma la query dell'utente in termini di ricerca ottimali per un motore full
 di sentenze federali svizzere (Elasticsearch multilingue IT/FR/DE).
 
 Regole:
-- Se la query contiene riferimenti ad articoli di legge, mantienili ESATTAMENTE come sono.
-  NON aggiungere, modificare o tradurre sigle di legge — ci pensa il sistema.
-- Per query concettuali (senza articoli), fornisci i concetti chiave nelle TRE lingue
-  nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
+- Se la query contiene riferimenti ad articoli di legge (es. "Art. 41 OR", "Art. 336 CO"):
+  restituisci la query_ottimizzata IDENTICA all'input — NON aggiungere concetti, sinonimi
+  o traduzioni. Il sistema espande le sigle automaticamente.
+- Se la query è SOLO concettuale (nessun articolo), fornisci i concetti chiave nelle TRE
+  lingue nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
   Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
   Esempio: "licenziamento abusivo" → "licenziamento abusivo | missbräuchliche Kündigung | licenciement abusif"
   Esempio: "responsabilità civile" → "responsabilità civile | Haftpflicht | responsabilité civile"
-  Esempio: "diritto d'autore" → "diritto d'autore | Urheberrecht | droit d'auteur"
+- Se la query mescola articolo + concetto (es. "licenziamento Art. 336 CO"), mantieni
+  l'articolo invariato e traduci solo il concetto nelle 3 lingue.
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
