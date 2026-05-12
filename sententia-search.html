@@ -1852,7 +1852,7 @@ function setCourt(mode) {
   document.getElementById('courtCanBtn').classList.toggle('active', mode === 'can');
   document.getElementById('fedSubItems').classList.toggle('open', mode === 'fed');
   document.getElementById('canSubItems').classList.toggle('open', mode === 'can');
-  if (lastQuery && allLoaded.length > 0) startSearch();
+  if (lastQuery) startSearch();
   else applyFilters();
 }
 

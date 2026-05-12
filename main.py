@@ -859,14 +859,42 @@ def _es_normalize(hit: dict) -> dict:
     }
 
 
+_ES_ART_RE = re.compile(
+    r'Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+'
+    r'(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
+    re.UNICODE,
+)
+
+def _prepara_query_es(query: str) -> str:
+    """Converte riferimenti ad articoli in phrase queries per ES simple_query_string.
+
+    'Art. 41 CO Art. 41 OR' → '"Art. 41 CO" | "Art. 41 OR"'
+    'licenziamento Art. 41 CO Art. 41 OR' → 'licenziamento "Art. 41 CO" | "Art. 41 OR"'
+
+    Senza questo, ES con default_operator=or cercherebbe "Art" OR "41" OR "CO" OR "OR"
+    → quasi ogni documento legale matcha.
+    """
+    parts = _ES_ART_RE.split(query)
+    art_refs   = _ES_ART_RE.findall(query)
+    other_parts = [p.strip() for p in parts if p.strip()]
+
+    if not art_refs:
+        return query  # nessun articolo → query invariata
+
+    phrase_block = " | ".join(f'"{ref.strip()}"' for ref in art_refs)
+    non_art      = " ".join(p for p in other_parts if not _ES_ART_RE.fullmatch(p))
+    return f"{non_art} {phrase_block}".strip() if non_art else phrase_block
+
+
 async def _entscheidsuche_search(
     query: str, limit: int, http: httpx.AsyncClient
 ) -> list[dict]:
     """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
+    es_query = _prepara_query_es(query)
     payload = {
         "query": {
             "simple_query_string": {
-                "query": query,
+                "query": es_query,
                 "default_operator": "or",
             }
         },
