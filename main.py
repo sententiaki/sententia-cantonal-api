@@ -889,11 +889,12 @@ def _prepara_query_es(query: str) -> str:
 
 
 async def _entscheidsuche_search(
-    query: str, limit: int, http: httpx.AsyncClient
+    query: str, limit: int, http: httpx.AsyncClient, offset: int = 0
 ) -> list[dict]:
     """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
     es_query = _prepara_query_es(query)
     payload = {
+        "from": offset,
         "query": {
             "simple_query_string": {
                 "query": es_query,
@@ -1124,7 +1125,8 @@ async def cerca_stream(
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
                 # entscheidsuche primario (veloce, affidabile) — OCL fallback se ES torna vuoto
-                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
+                # offset passato come ES 'from' per supportare paginazione (load more)
+                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http, offset=offset)
                 # Federal IDs start with CH_; filter based on requested court mode
                 if tipo_filter == "cantonal":
                     hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
