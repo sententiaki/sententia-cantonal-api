@@ -1136,9 +1136,7 @@ async def cerca_stream(
                     # federal (default, None, or "federal")
                     hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
                 if not hits:
-                    log.info("ES returned 0, falling back to OCL")
-                    hits = await _ocl_search(query_opt, min(fetch_limit, 40), http,
-                                             language=ocl_lang, offset=offset)
+                    log.info("ES returned 0, OCL fallback disabled (down) — skipping")
 
                 # Filtro anno
                 if anno_da or anno_a:
@@ -1180,8 +1178,10 @@ async def cerca_stream(
                 if not hits:
                     if canton_filter:
                         msg = f"Nessuna sentenza trovata per il cantone '{canton_filter.upper()}' su OpenCaseLaw."
+                    elif tipo_filter == "federal":
+                        msg = "Nessuna sentenza federale trovata per questa ricerca."
                     elif tipo_filter == "cantonal":
-                        msg = "Nessuna sentenza cantonale trovata per questa ricerca su OpenCaseLaw."
+                        msg = "Nessuna sentenza cantonale trovata per questa ricerca."
                     elif tribunal_filter:
                         msg = f"Nessuna sentenza trovata per il tribunale '{tribunal_filter.upper()}'."
                     elif area_filter:
@@ -1344,16 +1344,34 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     lang = lang if lang in ("it", "de", "fr") else "it"
 
     # ── Validazione formato codice sentenza ──────────────────────────────────
-    # Rifiuta immediatamente parole chiave, articoli di legge, ecc.
-    # Formati validi: 6B_302/2023 | F-2684/2026 | 143 II 268 | BGE_134_III_67
+    # Rifiuta parole chiave, articoli di legge, testo libero.
+    # Formati validi (esempi):
+    #   6B_302/2023      BGer camera_num/anno
+    #   F-2684/2026      BVGer lettera-num/anno
+    #   SK.2020.62       BStGer camera.anno.num  (punto)
+    #   BB.2023.45       BStGer altra camera
+    #   RR.2021.4        BStGer
+    #   A-1819-2020      BVGer (trattini)
+    #   143 II 268       BGE volume num_romano num
+    #   BGE_134_III_67   BGE con underscore
+    #   42.2025.11       cantonale (num.anno.num)
+    #   ATA/2020/123     cantonale GE (sigla/anno/num)
+    #   SB200001         cantonale ZH (sigla+anno+num)
+    #   ACJP/2020/123    cantonale
+    #   O2017_001        BPatGer (lettera+anno_num)
     _DOCKET_RE = re.compile(
         r"""
         (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?   # prefisso opzionale
         (?:
-            [1-9][A-Z]{0,3}_\d+/\d{4}           # 6B_302/2023
-          | [A-Z]{1,3}[-_]\d+[/_-]\d{2,4}        # F-2684/2026 / SK.2023.1
-          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+       # 143 II 268 / 134_III_67
-          | \d{1,4}\.\d{4}\.\d+                  # 52.2015.575 / 42.2025.11 (cantonal)
+            [1-9][A-Z]{0,3}[_/]\d+[/_]\d{4}           # 6B_302/2023  6B/302/2023
+          | [A-Z]{1,3}[-]\d{3,6}[-/]\d{2,4}            # F-2684/2026  A-1819-2020
+          | [A-Z]{2,4}\.20\d{2}\.\d+                   # SK.2020.62  BB.2023.45  RR.2021.4
+          | [A-Z]{2,4}-20\d{2}-\d+                     # SK-2020-62  (variante trattini)
+          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+             # 143 II 268  134_III_67
+          | \d{1,4}\.\d{4}\.\d+                        # 42.2025.11  52.2015.575 (cantonal)
+          | [A-Z]{2,6}/20\d{2}/\d+                     # ATA/2020/123  ACJP/2020/123
+          | [A-Z]{2,6}\d{4,6}                          # SB200001  LE200001 (ZH cantonale)
+          | [A-Z]{1,2}20\d{2}[/_-]\d+                  # O2017_001 (BPatGer)
         )
         """,
         re.IGNORECASE | re.VERBOSE,
