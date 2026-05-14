@@ -24,6 +24,9 @@ import logging
 import math
 import os
 import re
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -32,6 +35,7 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import AsyncOpenAI
+from pydantic import BaseModel
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -42,7 +46,7 @@ app = FastAPI(title="Sententia Search API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "OPTIONS"],
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -1590,6 +1594,49 @@ async def html_federale(
         return JSONResponse({"errore": "Contenuto non trovato."}, status_code=400)
 
     return JSONResponse({"html": html_out, "url": url})
+
+
+# ── /feedback ─────────────────────────────────────────────────────────────────
+
+class FeedbackPayload(BaseModel):
+    message: str
+    email: Optional[str] = None
+    query: Optional[str] = None
+    result_code: Optional[str] = None
+
+@app.post("/feedback")
+async def feedback(payload: FeedbackPayload):
+    smtp_pass = os.environ.get("SMTP_PASS", "")
+    if not smtp_pass:
+        log.warning("SMTP_PASS non impostato — feedback non inviato: %s", payload.message)
+        return JSONResponse({"ok": True, "note": "logged only"})
+
+    body_lines = [
+        f"Messaggio: {payload.message}",
+        f"Email utente: {payload.email or '—'}",
+        f"Query: {payload.query or '—'}",
+        f"Sentenza: {payload.result_code or '—'}",
+    ]
+    body = "\n".join(body_lines)
+
+    msg = MIMEMultipart()
+    msg["From"]    = "sententiaki@gmail.com"
+    msg["To"]      = "sententiaki@gmail.com"
+    msg["Subject"] = f"[Sententia feedback] {(payload.query or payload.result_code or 'senza query')[:60]}"
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as s:
+            s.ehlo()
+            s.starttls()
+            s.login("sententiaki@gmail.com", smtp_pass)
+            s.sendmail("sententiaki@gmail.com", "sententiaki@gmail.com", msg.as_string())
+        log.info("Feedback inviato via email")
+    except Exception as exc:
+        log.error("Errore invio feedback email: %s", exc)
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+
+    return JSONResponse({"ok": True})
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
