@@ -1124,9 +1124,9 @@ async def cerca_stream(
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # entscheidsuche primario (veloce, affidabile) — OCL fallback se ES torna vuoto
-                # offset passato come ES 'from' per supportare paginazione (load more)
-                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http, offset=offset)
+                # entscheidsuche primario: fetch sempre da from=0 con size più grande,
+                # poi slice [offset:offset+limit] dopo rerank per paginazione stabile
+                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit + offset, 80), http, offset=0)
                 # Federal IDs start with CH_; filter based on requested court mode
                 if tipo_filter == "cantonal":
                     hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
@@ -1173,7 +1173,7 @@ async def cerca_stream(
                     hits = [h for h in hits if _rileva_cantone(_court(h)) == canton_filter]
 
                 # Re-rank: relevance_score × log(1 + citation_count) — BGE citate salgono
-                hits = _rerank(hits)[:limit]
+                hits = _rerank(hits)[offset:offset + limit]
 
                 if not hits:
                     if canton_filter:
