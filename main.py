@@ -408,14 +408,14 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
 _ART_CODE_RE = re.compile(
     r'(Art\.\s+\d+[a-z]?)'
     r'(\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
+    r'\s+([A-Z][A-Za-z]{0,7}\.?)\b',
     re.UNICODE,
 )
 
 # Riconosce una query che è SOLO un riferimento articolo (nessun concetto aggiuntivo)
 _PURE_ART_RE = re.compile(
     r'^Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'(?:\s+(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD))+\s*$',
+    r'(?:\s+[A-Z][A-Za-z]{0,7}\.?)+\s*$',
     re.UNICODE,
 )
 
@@ -467,12 +467,18 @@ def espandi_codici_articolo(query: str) -> str:
 
 _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
 Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
-di sentenze federali svizzere (Elasticsearch multilingue IT/FR/DE).
+di sentenze svizzere (Elasticsearch multilingue IT/FR/DE).
 
 Regole:
-- Se la query contiene riferimenti ad articoli di legge (es. "Art. 41 OR", "Art. 336 CO"):
-  restituisci la query_ottimizzata IDENTICA all'input — NON aggiungere concetti, sinonimi
-  o traduzioni. Il sistema espande le sigle automaticamente.
+- Se la query contiene un articolo di legge con un codice NOTO (es. "Art. 41 OR", "Art. 336 CO",
+  "Art. 77a OASA"): espandi il codice nelle sue forme equivalenti nelle 3 lingue nazionali,
+  separando con spazio (non |). Il sistema poi raggruppa in phrase queries automaticamente.
+  Esempi:
+    "Art. 77a OASA" → "Art. 77a OASA Art. 77a AIG Art. 77a LEI"
+    "Art. 41 CO" → "Art. 41 CO Art. 41 OR"  (già gestito dal sistema, lascia identico)
+    "Art. 10 LPD" → "Art. 10 LPD Art. 10 DSG Art. 10 LPD"
+  Se il codice è lo stesso nelle 3 lingue, restituisci identico.
+  Se non conosci le equivalenze del codice, restituisci identico.
 - Se la query è SOLO concettuale (nessun articolo), fornisci i concetti chiave nelle TRE
   lingue nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
   Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
@@ -866,8 +872,7 @@ def _es_normalize(hit: dict) -> dict:
 
 
 _ES_ART_RE = re.compile(
-    r'Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+'
-    r'(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
+    r'Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
     re.UNICODE,
 )
 
