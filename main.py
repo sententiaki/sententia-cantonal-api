@@ -1395,7 +1395,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             # Preferisce match esatto sul docket number, altrimenti il primo risultato
             exact = [h for h in es_hits
                      if _normalize_codice(h.get("docket_number") or "") == norm_input]
-            best = exact[0] if exact else (es_hits[0] if es_hits else None)
+            best = exact[0] if exact else None
             if best:
                 full_text = best.get("_es_text") or ""
                 if not full_text and best.get("url"):
