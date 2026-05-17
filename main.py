@@ -69,6 +69,7 @@ _FEDERAL_COURT_KEYWORDS = {
     "bundesstrafgericht", "tribunal pénal fédéral", "tribunale penale federale",
     "bundespatentgericht", "tribunale federale dei brevetti",
     "bger", "bvger", "bstger", "bpatger",
+    "bstg", "bge",  # varianti abbreviate usate nei _id ES (CH_BSTG_, CH_BGE_)
 }
 
 def _rileva_tipo(court_raw: str) -> str:
@@ -86,7 +87,7 @@ def _rileva_tribunal(court_raw: str) -> str:
                                   "tribunale amministrativo federale", "bvger")):
         return "bvger"
     if any(kw in key for kw in ("bundesstrafgericht", "tribunal pénal fédéral",
-                                  "tribunale penale federale", "bstger")):
+                                  "tribunale penale federale", "bstger", "bstg")):
         return "bstger"
     if any(kw in key for kw in ("bundespatentgericht", "bpatger")):
         return "bpatger"
@@ -97,11 +98,32 @@ def _rileva_tribunal(court_raw: str) -> str:
 
 # Parole chiave per riconoscere il cantone dal nome del tribunale
 _CANTON_KEYWORDS: dict[str, list[str]] = {
-    "ti": ["ticino"],
-    "zh": ["zürich", "zurich"],
-    "be": ["bern", "berne"],
-    "ge": ["genf", "genève", "geneve", "canton de genève", "kanton genf"],
+    "ag": ["aargau", "argovia", "argovie"],
+    "ai": ["appenzell innerrhoden", "appenzello interno"],
+    "ar": ["appenzell ausserrhoden", "appenzello esterno"],
+    "be": ["bern", "berne", "berna"],
+    "bl": ["basel-landschaft", "basilea campagna", "bâle-campagne"],
+    "bs": ["basel-stadt", "basilea città", "bâle-ville"],
+    "fr": ["freiburg", "friburgo", "fribourg"],
+    "ge": ["genf", "genève", "geneve", "ginevra", "canton de genève", "kanton genf"],
+    "gl": ["glarus", "glarona", "glaris"],
+    "gr": ["graubünden", "grigioni", "grisons"],
+    "ju": ["jura", "giura"],
+    "lu": ["luzern", "lucerna", "lucerne"],
+    "ne": ["neuenburg", "neuchâtel", "neuchatel"],
+    "nw": ["nidwalden", "nidvaldo", "nidwald"],
+    "ow": ["obwalden", "obvaldo", "obwald"],
+    "sg": ["st. gallen", "san gallo", "saint-gall"],
+    "sh": ["schaffhausen", "sciaffusa", "schaffhouse"],
+    "so": ["solothurn", "soletta", "soleure"],
+    "sz": ["schwyz", "svitto", "schwytz"],
+    "tg": ["thurgau", "turgovia", "thurgovie"],
+    "ti": ["ticino", "tessin"],
+    "ur": ["uri"],
     "vd": ["vaud", "waadt"],
+    "vs": ["wallis", "vallese", "valais"],
+    "zg": ["zug", "zugo", "zoug"],
+    "zh": ["zürich", "zurich", "zurigo"],
 }
 
 def _rileva_cantone(court_raw: str) -> str:
@@ -778,8 +800,9 @@ def _es_normalize(hit: dict) -> dict:
     _ES_COURT = {
         "BGER": "Tribunale federale", "BGE": "Tribunale federale",
         "BVGER": "Tribunale amministrativo federale",
-        "BSTGER": "Tribunale penale federale",
+        "BSTGER": "Tribunale penale federale", "BSTG": "Tribunale penale federale",
         "BPATGER": "Tribunale federale dei brevetti",
+        "BGE": "Tribunale federale",
         "AG": "Aargau", "BE": "Berna", "BL": "Basilea Campagna",
         "BS": "Basilea Città", "FR": "Friburgo", "GE": "Ginevra",
         "GL": "Glarona", "GR": "Grigioni", "JU": "Giura",
