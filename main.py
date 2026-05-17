@@ -1391,7 +1391,10 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             log.info("bger.li miss for '%s', trying entscheidsuche", codice)
             source = "entscheidsuche.ch"
             norm_input = _normalize_codice(codice)
-            es_hits = await _entscheidsuche_search(codice, 10, http)
+            # Normalizza separatori per ES: "80-2017-7" → "80.2017.7"
+            # ES interpreta "-" come negazione in simple_query_string
+            codice_es = re.sub(r'(\d+)[-_](\d{4})[-_](\d+)', r'\1.\2.\3', codice.strip())
+            es_hits = await _entscheidsuche_search(codice_es, 10, http)
             # Preferisce match esatto sul docket number, altrimenti il primo risultato
             exact = [h for h in es_hits
                      if _normalize_codice(h.get("docket_number") or "") == norm_input]
