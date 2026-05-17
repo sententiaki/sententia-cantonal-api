@@ -1375,50 +1375,6 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
     lang = lang if lang in ("it", "de", "fr") else "it"
 
-    # ── Validazione formato codice sentenza ──────────────────────────────────
-    # Rifiuta parole chiave, articoli di legge, testo libero.
-    # Formati validi (esempi):
-    #   6B_302/2023      BGer camera_num/anno
-    #   F-2684/2026      BVGer lettera-num/anno
-    #   SK.2020.62       BStGer camera.anno.num  (punto)
-    #   BB.2023.45       BStGer altra camera
-    #   RR.2021.4        BStGer
-    #   A-1819-2020      BVGer (trattini)
-    #   143 II 268       BGE volume num_romano num
-    #   BGE_134_III_67   BGE con underscore
-    #   42.2025.11       cantonale (num.anno.num)
-    #   ATA/2020/123     cantonale GE (sigla/anno/num)
-    #   SB200001         cantonale ZH (sigla+anno+num)
-    #   ACJP/2020/123    cantonale
-    #   O2017_001        BPatGer (lettera+anno_num)
-    _DOCKET_RE = re.compile(
-        r"""
-        (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?   # prefisso opzionale
-        (?:
-            [1-9][A-Z]{0,3}[_/]\d+[/_]\d{4}           # 6B_302/2023  6B/302/2023
-          | [A-Z]{1,3}[-]\d{3,6}[-/]\d{2,4}            # F-2684/2026  A-1819-2020
-          | [A-Z]{2,4}\.20\d{2}\.\d+                   # SK.2020.62  BB.2023.45  RR.2021.4
-          | [A-Z]{2,4}-20\d{2}-\d+                     # SK-2020-62  (variante trattini)
-          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+             # 143 II 268  134_III_67
-          | \d{1,4}\.\d{4}\.\d+                        # 42.2025.11  52.2015.575 (cantonal)
-          | [A-Z]{2,6}/20\d{2}/\d+                     # ATA/2020/123  ACJP/2020/123
-          | [A-Z]{2,6}\d{4,6}                          # SB200001  LE200001 (ZH cantonale)
-          | [A-Z]{1,2}20\d{2}[/_-]\d+                  # O2017_001 (BPatGer)
-        )
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
-    if not _DOCKET_RE.search(codice.strip()):
-        _invalid_msg = {
-            "it": (f"'{codice}' non è un codice sentenza. Inserisci un numero di ruolo "
-                   f"come 6B_302/2023 o BGE 143 II 268. Per cercare per tema usa Smart Search."),
-            "de": (f"'{codice}' ist keine Urteilsnummer. Gib eine Dossiernummer ein wie "
-                   f"6B_302/2023 oder BGE 143 II 268. Für die thematische Suche verwende Smart Search."),
-            "fr": (f"'{codice}' n'est pas un numéro d'arrêt. Entrez un numéro de dossier "
-                   f"comme 6B_302/2023 ou BGE 143 II 268. Pour rechercher par thème, utilisez Smart Search."),
-        }
-        return JSONResponse({"errore": _invalid_msg[lang]}, status_code=400)
-
     source = "bger.li"
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
         hit: dict = {}
