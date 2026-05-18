@@ -1115,7 +1115,6 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
         "url":            url_final,
         "decision_id":    hit.get("decision_id", ""),
         "citation_count": int(hit.get("citation_count") or 0),
-        "ocl_statutes":   hit.get("statutes") or [],
     }
 
 async def _elabora_risultato(
@@ -1135,11 +1134,7 @@ async def _elabora_risultato(
         testo = await _fetch_bger_text(meta["url"], http) if meta.get("url") else ""
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
     # Articoli: estratti dal riassunto AI (coerente col testo mostrato) → fallback testo grezzo
-    ocl_statutes = meta.pop("ocl_statutes", [])
-    if ocl_statutes:
-        art = ocl_statutes
-    else:
-        art = estrai_articoli_combinati(riass, testo)
+    art = estrai_articoli_combinati(riass, testo)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
