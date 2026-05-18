@@ -414,6 +414,9 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
     # Imposta federale diretta — IT/FR = LIFD, DE = DBG
     "LIFD":  ["DBG"],           # IT/FR → DE
     "DBG":   ["LIFD"],          # DE → IT/FR
+    # Concorrenza sleale — IT/FR = LCD, DE = UWG
+    "LCD":   ["UWG"],
+    "UWG":   ["LCD"],
     # DE → IT + FR
     "StGB":  ["CP"],
     "ZGB":   ["CC"],
@@ -492,53 +495,105 @@ Trasforma la query dell'utente in termini di ricerca ottimali per un motore full
 di sentenze svizzere (Elasticsearch multilingue IT/FR/DE).
 
 Regole:
-- Se la query contiene un articolo di legge con un codice NOTO (es. "Art. 41 OR", "Art. 336 CO",
-  "Art. 77a OASA"): espandi il codice nelle sue forme equivalenti nelle 3 lingue nazionali,
-  separando con spazio (non |). Il sistema poi raggruppa in phrase queries automaticamente.
+- I riferimenti ad articoli di legge (es. "Art. 41 CO Art. 41 OR") sono GIÀ stati espansi
+  nelle lingue note dal sistema. NON toccarli, NON aggiungere nuove forme, lasciali ESATTAMENTE
+  come appaiono nella query.
+- Se la query contiene un articolo con un codice SCONOSCIUTO al sistema (es. "Art. 77a OASA",
+  "Art. 3 LAINF", "Art. 8 LDis"): espandi il codice nelle sue forme equivalenti nelle 3 lingue
+  nazionali svizzere, separando con spazio (non |).
   Esempi:
     "Art. 77a OASA" → "Art. 77a OASA Art. 77a AIG Art. 77a LEI"
-    "Art. 41 CO" → "Art. 41 CO Art. 41 OR"  (già gestito dal sistema, lascia identico)
-    "Art. 10 LPD" → "Art. 10 LPD Art. 10 DSG Art. 10 LPD"
-  Se il codice è lo stesso nelle 3 lingue, restituisci identico.
-  Se non conosci le equivalenze del codice, restituisci identico.
+    "Art. 3 LAINF"  → "Art. 3 LAINF Art. 3 UVG Art. 3 LAA"
+  Se non conosci le equivalenze, restituisci identico.
 - Se la query è SOLO concettuale (nessun articolo), fornisci i concetti chiave nelle TRE
   lingue nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
   Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
   Esempio: "licenziamento abusivo" → "licenziamento abusivo | missbräuchliche Kündigung | licenciement abusif"
   Esempio: "responsabilità civile" → "responsabilità civile | Haftpflicht | responsabilité civile"
-- Se la query mescola articolo + concetto (es. "licenziamento Art. 336 CO"), mantieni
-  l'articolo invariato e traduci solo il concetto nelle 3 lingue.
+- Se la query mescola articolo + concetto (es. "licenziamento Art. 336 CO Art. 336 OR"),
+  mantieni gli articoli INVARIATI e traduci solo la parte concettuale nelle 3 lingue.
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
-async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
+async def _ocl_legge_espandi(code: str, http: httpx.AsyncClient) -> list[str]:
+    """Chiama OCL per ottenere le sigle equivalenti nelle 3 lingue per un codice sconosciuto.
+    Ritorna lista delle sigle diverse dal codice originale (es. ["VZAE"] per "OASA").
+    In caso di errore o timeout ritorna lista vuota."""
+    try:
+        results = await asyncio.gather(
+            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "de"}, timeout=3.0),
+            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "fr"}, timeout=3.0),
+            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "it"}, timeout=3.0),
+            return_exceptions=True,
+        )
+        abbrs = []
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            if r.status_code == 200:
+                abbr = r.json().get("abbreviation", "")
+                if abbr and abbr != code and abbr not in abbrs:
+                    abbrs.append(abbr)
+        return abbrs
+    except Exception:
+        return []
+
+
+async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient | None = None) -> tuple[str, str]:
     # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN CODE"
     query_norm = pre_processa_query(query)
+    # 2. Espandi i codici NOTI deterministicamente (CO→OR, CP→StGB, LCD→UWG, ecc.)
+    #    PRIMA dell'AI, così l'AI non deve toccarli e non può duplicarli
+    query_pre = espandi_codici_articolo(query_norm)
 
-    # 2. L'AI ottimizza i concetti (NON tocca i codici legge)
+    # 2b. Per i codici SCONOSCIUTI (non in _CODE_EQUIVALENTS), lookup OCL in parallelo
+    if http:
+        unknown_codes = [
+            m.group(3) for m in _ART_CODE_RE.finditer(query_norm)
+            if m.group(3) not in _CODE_EQUIVALENTS
+        ]
+        if unknown_codes:
+            lookup_results = await asyncio.gather(
+                *[_ocl_legge_espandi(c, http) for c in unknown_codes],
+                return_exceptions=True,
+            )
+            extra_map: dict[str, list[str]] = {}
+            for code, res in zip(unknown_codes, lookup_results):
+                if isinstance(res, list) and res:
+                    extra_map[code] = res
+            if extra_map:
+                def _expand_extra(m: re.Match) -> str:
+                    art, cpv, code = m.group(1), m.group(2) or "", m.group(3)
+                    extras = extra_map.get(code, [])
+                    if not extras:
+                        return m.group(0)
+                    alt = " ".join(f"{art} {e}" for e in extras)
+                    return f"{art}{cpv} {code} {alt}"
+                query_pre = _ART_CODE_RE.sub(_expand_extra, query_pre)
+
+    # 3. L'AI traduce solo i concetti e gestisce i codici SCONOSCIUTI (OASA, LAINF, ecc.)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{query_norm}"'},
+                {"role": "user",   "content": f'Query: "{query_pre}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", query_norm)
-            # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
-            # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico
-            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
+            raw_opt = d.get("query_ottimizzata", query_pre)
+            # Normalizza output AI ma NON ri-espandere i codici (già espansi al passo 2)
+            final_opt = pre_processa_query(raw_opt)
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
 
     # Fallback se AI non disponibile
-    return espandi_codici_articolo(query_norm), "Query diretta"
+    return query_pre, "Query diretta"
 
 
 # ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
@@ -1065,7 +1120,7 @@ async def cerca(
     ai      = AsyncOpenAI(api_key=api_key) if api_key else None
 
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
-        query_opt, spiegazione = await ottimizza_query(query, ai) if ai else (query, "")
+        query_opt, spiegazione = await ottimizza_query(query, ai, http) if ai else (query, "")
         log.info("cerca: '%s' → '%s' | lang=%s limit=%d", query, query_opt, lang, limit)
 
         hits = await _ocl_search(query_opt, limit * 2, http)
@@ -1145,7 +1200,7 @@ async def cerca_stream(
 
                 yield sse({"type": "status", "message": "Ottimizzazione query..."})
                 if ai:
-                    query_opt, spiegazione = await ottimizza_query(query, ai)
+                    query_opt, spiegazione = await ottimizza_query(query, ai, http)
                 else:
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
