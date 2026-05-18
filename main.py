@@ -993,7 +993,7 @@ def _prepara_query_es(query: str) -> str:
     if not art_refs:
         return query  # nessun articolo → query invariata
 
-    phrase_block = " | ".join(f'"{ref.strip()}"' for ref in art_refs)
+    phrase_block = " | ".join(f'"{ref.strip()}"~2' for ref in art_refs)
     non_art      = " ".join(p for p in other_parts if not _ES_ART_RE.fullmatch(p))
     return f"{non_art} {phrase_block}".strip() if non_art else phrase_block
 
