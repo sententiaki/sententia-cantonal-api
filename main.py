@@ -1587,6 +1587,8 @@ async def articolo_ocl(
         "art":                art,
         "sr_number":          d.get("sr_number", ""),
         "consolidation_date": d.get("consolidation_date", ""),
+        "titolo_legge":       d.get("title", ""),
+        "abbreviazione":      d.get("abbreviation", ""),
         "lang":               lang,
     })
 
