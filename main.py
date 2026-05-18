@@ -981,6 +981,7 @@ def _es_normalize(hit: dict) -> dict:
         "decision_id":    "",
         "_es_text":       (full_text or abstract)[:50_000],
         "_es_id":         doc_id,
+        "_es_score":      float(hit.get("_score") or 0),
     }
 
 
@@ -988,6 +989,17 @@ _ES_ART_RE = re.compile(
     r'Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
     re.UNICODE,
 )
+
+def _score_filter(hits: list[dict], ratio: float = 0.15) -> list[dict]:
+    """Scarta risultati il cui score è < ratio * score_massimo. Non ritorna mai lista vuota."""
+    if not hits:
+        return hits
+    max_s = max(h.get("_es_score", 0) for h in hits)
+    if max_s <= 0:
+        return hits
+    filtered = [h for h in hits if h.get("_es_score", 0) >= max_s * ratio]
+    return filtered if filtered else hits
+
 
 def _prepara_query_es(query: str) -> tuple[str, str]:
     """Separa la query in (phrase_block, non_art).
@@ -1023,23 +1035,32 @@ async def _entscheidsuche_search(
             log.warning("Entscheidsuche search error: %s", repr(exc))
             return []
 
+    base = {"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}]}
+
     if phrase_block:
-        # Fase 1: articolo obbligatorio (must), keywords aumentano score (should)
+        # Articolo obbligatorio (must), keywords aumentano score (should)
         bool_q: dict = {"must": [{"simple_query_string": {"query": phrase_block, "default_operator": "or"}}]}
         if non_art:
             bool_q["should"] = [{"simple_query_string": {"query": non_art, "default_operator": "or"}}]
-        hits = await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
-                            "query": {"bool": bool_q}})
+        hits = await _post({**base, "query": {"bool": bool_q}})
         if hits:
-            return hits
-        # Fase 2: fallback — nessun risultato con l'articolo, ricerca soft
+            return _score_filter(hits)
+        # Fallback: nessun risultato con l'articolo, ricerca soft
         log.info("No results with article filter, falling back to soft query")
         soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
-        return await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
-                            "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
+        hits = await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
+        return _score_filter(hits)
 
-    return await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
-                        "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
+    # Nessun articolo: minimum_should_match per precisione (80% dei termini se ≥3)
+    hits = await _post({**base, "query": {"simple_query_string": {
+        "query": query, "default_operator": "or", "minimum_should_match": "3<80%"
+    }}})
+    if hits:
+        return _score_filter(hits)
+    # Fallback: OR puro se 0 risultati
+    log.info("No results with minimum_should_match, falling back to OR: %s", query[:80])
+    hits = await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
+    return _score_filter(hits)
 
 
 def _merge_hits(ocl: list[dict], es: list[dict]) -> list[dict]:
