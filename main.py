@@ -180,7 +180,7 @@ _CODES = (
 # Cattura: "Art.? N [cpv/abs/al/lett N] CODE"  oppure  "articolo N CODE"
 # Il codice legge può essere qualsiasi sigla che inizia con maiuscola (2-8 char)
 ARTICLE_RE = re.compile(
-    r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]?)'
+    r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]{0,8})'
     r'(?:\s+(?:[Cc]pv|[Aa]bs|[Aa]l|[Ll]ett?|[Ll]it|[Zz]iff|ch|[Nn]r)\.?\s*[a-z\d]+)?'
     r'(?:\s+(?:del|della|des?|von|du|de\s+la))?'
     r'\s+([A-Z][A-Za-z]{1,7}\.?)\b',
@@ -191,7 +191,7 @@ ARTICLE_RE = re.compile(
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 _ART_CONGIUNTO_RE = re.compile(
-    r'Art\.\s+(\d+[a-z]?)\s+(?:e|und|et)\s+(\d+[a-z]?)\s+(' + _CODES + r')\b',
+    r'Art\.\s+(\d+[a-z]{0,8})\s+(?:e|und|et)\s+(\d+[a-z]{0,8})\s+(' + _CODES + r')\b',
     re.UNICODE,
 )
 
@@ -290,18 +290,18 @@ _LAW_NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
 # Normalizza varianti di "articolo/article/artikel/art" → "Art. NNN"
 # Cattura anche "art.111" (senza spazio) e "art 111" (senza punto)
 _QUERY_ART_RE = re.compile(
-    r'\b(articol[oi]|article|artikel|art)\.?\s*(\d+[a-z]?)',
+    r'\b(articol[oi]|article|artikel|art)\.?\s*(\d+[a-z]{0,8})',
     re.IGNORECASE | re.UNICODE,
 )
 # Rimuove preposizioni residue: "Art. 111 del CP" → "Art. 111 CP"
 _QUERY_DEL_RE = re.compile(
-    r'(Art\.\s+\d+[a-z]?(?:\s+(?:cpv|abs|al|Abs)\.?\s*\d+)?)\s+'
+    r'(Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv|abs|al|Abs)\.?\s*\d+)?)\s+'
     r'(?:del|della|der|des|de\s+la|du|von|di)\s+',
     re.IGNORECASE,
 )
 # Riordina "CODICE Art. NNN" → "Art. NNN CODICE" (es. "CO Art. 97" → "Art. 97 CO")
 _QUERY_CODE_BEFORE_ART_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(Art\.\s+\d+[a-z]?)',
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(Art\.\s+\d+[a-z]{0,8})',
     re.IGNORECASE,
 )
 # Mappa codici → forma canonica (gestisce maiuscole/minuscole)
@@ -328,14 +328,14 @@ _AL_NODOT_RE  = re.compile(r'\bal\s+(\d+)',    re.I)
 # "N CODE" senza prefisso Art. — cattura anche "N cpv/Abs/al N CODE"
 _BARE_NUM_CODE_RE = re.compile(
     r'(?<!\w)'
-    r'(\d+[a-z]?)'
+    r'(\d+[a-z]{0,8})'
     r'(\s+(?:cpv\.?|Abs\.?|al\.?)\s*\d+)?'
     r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
     re.UNICODE | re.IGNORECASE,
 )
 # "CODE N" senza prefisso Art.  (es. "OR 50", "StGB 111", "or 50")
 _CODE_BARE_NUM_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]?)\b',
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]{0,8})\b',
     re.UNICODE | re.IGNORECASE,
 )
 
@@ -393,7 +393,7 @@ def pre_processa_query(query: str) -> str:
     result = ''.join(parts)
     # 7. Riordina "cpv./Abs. N Art. N CODE" → "Art. N cpv./Abs. N CODE"
     result = re.sub(
-        r'\b(cpv\.|Abs\.|al\.)\s*(\d+)\s+(Art\.\s+\d+[a-z]?)',
+        r'\b(cpv\.|Abs\.|al\.)\s*(\d+)\s+(Art\.\s+\d+[a-z]{0,8})',
         lambda m: f"{m.group(3)} {m.group(1)} {m.group(2)}",
         result, flags=re.IGNORECASE,
     )
@@ -444,7 +444,7 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
 
 # Trova "Art. NNN [cpv./Abs./al. N] CODE" nella query già normalizzata
 _ART_CODE_RE = re.compile(
-    r'(Art\.\s+\d+[a-z]?)'
+    r'(Art\.\s+\d+[a-z]{0,8})'
     r'(\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
     r'\s+([A-Z][A-Za-z]{0,7}\.?)\b',
     re.UNICODE,
@@ -452,7 +452,7 @@ _ART_CODE_RE = re.compile(
 
 # Riconosce una query che è SOLO un riferimento articolo (nessun concetto aggiuntivo)
 _PURE_ART_RE = re.compile(
-    r'^Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
+    r'^Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
     r'(?:\s+[A-Z][A-Za-z]{0,7}\.?)+\s*$',
     re.UNICODE,
 )
@@ -973,55 +973,61 @@ def _es_normalize(hit: dict) -> dict:
 
 
 _ES_ART_RE = re.compile(
-    r'Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
+    r'Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
     re.UNICODE,
 )
 
-def _prepara_query_es(query: str) -> str:
-    """Converte riferimenti ad articoli in phrase queries per ES simple_query_string.
+def _prepara_query_es(query: str) -> tuple[str, str]:
+    """Separa la query in (phrase_block, non_art).
 
-    'Art. 41 CO Art. 41 OR' → '"Art. 41 CO" | "Art. 41 OR"'
-    'licenziamento Art. 41 CO Art. 41 OR' → 'licenziamento "Art. 41 CO" | "Art. 41 OR"'
-
-    Senza questo, ES con default_operator=or cercherebbe "Art" OR "41" OR "CO" OR "OR"
-    → quasi ogni documento legale matcha.
+    phrase_block: articoli come phrase queries slop-2 ("Art. 41 CO"~2 | "Art. 41 OR"~2)
+    non_art:      resto delle parole (linguaggio naturale)
     """
-    parts = _ES_ART_RE.split(query)
-    art_refs   = _ES_ART_RE.findall(query)
-    other_parts = [p.strip() for p in parts if p.strip()]
-
-    if not art_refs:
-        return query  # nessun articolo → query invariata
-
+    art_refs    = _ES_ART_RE.findall(query)
+    parts       = _ES_ART_RE.split(query)
+    non_art     = " ".join(p.strip() for p in parts if p.strip() and not _ES_ART_RE.fullmatch(p.strip()))
     phrase_block = " | ".join(f'"{ref.strip()}"~2' for ref in art_refs)
-    non_art      = " ".join(p for p in other_parts if not _ES_ART_RE.fullmatch(p))
-    return f"{non_art} {phrase_block}".strip() if non_art else phrase_block
+    return phrase_block, non_art
 
 
 async def _entscheidsuche_search(
     query: str, limit: int, http: httpx.AsyncClient, offset: int = 0
 ) -> list[dict]:
-    """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
-    es_query = _prepara_query_es(query)
-    payload = {
-        "from": offset,
-        "query": {
-            "simple_query_string": {
-                "query": es_query,
-                "default_operator": "or",
-            }
-        },
-        "size": limit,
-        "sort": [{"_score": {"order": "desc"}}],
-    }
-    try:
-        r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
-        r.raise_for_status()
-        hits = r.json().get("hits", {}).get("hits", [])
-        return [_es_normalize(h) for h in hits]
-    except Exception as exc:
-        log.warning("Entscheidsuche search error: %s", repr(exc))
-        return []
+    """Ricerca su entscheidsuche.ch.
+
+    Se la query contiene articoli di legge:
+      - fase 1 (strict): bool must=articolo + should=keywords → tutti i risultati contengono l'articolo
+      - fase 2 (fallback): solo se fase 1 → 0 risultati, query soft senza filtro articolo
+    Se la query non contiene articoli: simple_query_string ordinario.
+    """
+    phrase_block, non_art = _prepara_query_es(query)
+
+    async def _post(payload: dict) -> list[dict]:
+        try:
+            r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
+            r.raise_for_status()
+            return [_es_normalize(h) for h in r.json().get("hits", {}).get("hits", [])]
+        except Exception as exc:
+            log.warning("Entscheidsuche search error: %s", repr(exc))
+            return []
+
+    if phrase_block:
+        # Fase 1: articolo obbligatorio (must), keywords aumentano score (should)
+        bool_q: dict = {"must": [{"simple_query_string": {"query": phrase_block, "default_operator": "or"}}]}
+        if non_art:
+            bool_q["should"] = [{"simple_query_string": {"query": non_art, "default_operator": "or"}}]
+        hits = await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
+                            "query": {"bool": bool_q}})
+        if hits:
+            return hits
+        # Fase 2: fallback — nessun risultato con l'articolo, ricerca soft
+        log.info("No results with article filter, falling back to soft query")
+        soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
+        return await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
+                            "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
+
+    return await _post({"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}],
+                        "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
 
 
 def _merge_hits(ocl: list[dict], es: list[dict]) -> list[dict]:
