@@ -1103,14 +1103,12 @@ async def _elabora_risultato(
         # ES hit senza testo precaricato: scarica direttamente da bger.li
         testo = await _fetch_bger_text(meta["url"], http) if meta.get("url") else ""
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
-    # Priorità articoli: campo statutes strutturato di OCL → testo completo → riassunto
+    # Articoli: estratti dal riassunto AI (coerente col testo mostrato) → fallback testo grezzo
     ocl_statutes = meta.pop("ocl_statutes", [])
     if ocl_statutes:
         art = ocl_statutes
     else:
-        art = estrai_articoli(testo) if testo else estrai_articoli(riass)
-        if not art and riass:
-            art = estrai_articoli(riass)
+        art = estrai_articoli(riass) if riass else estrai_articoli(testo)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
