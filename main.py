@@ -178,11 +178,12 @@ _CODES = (
     "|LFus|FusG|LDIP|IPRG|PA|VwVG"
 )
 # Cattura: "Art.? N [cpv/abs/al/lett N] CODE"  oppure  "articolo N CODE"
+# Il codice legge può essere qualsiasi sigla che inizia con maiuscola (2-8 char)
 ARTICLE_RE = re.compile(
     r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]?)'
     r'(?:\s+(?:cpv|abs|al|lett?|lit)\.?\s*\d+)?'
     r'(?:\s+(?:del|della|des?|von|du|de\s+la))?'
-    r'\s+(' + _CODES + r')\b',
+    r'\s+([A-Z][A-Za-z]{1,7}\.?)\b',
     re.UNICODE,
 )
 
