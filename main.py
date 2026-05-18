@@ -572,26 +572,32 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
                     return f"{art}{cpv} {code} {alt}"
                 query_pre = _ART_CODE_RE.sub(_expand_extra, query_pre)
 
-    # 3. L'AI traduce solo i concetti — se la query contiene SOLO articoli (nessun concetto
-    #    da tradurre) saltiamo l'AI per evitare che aggiunga varianti errate
-    if _PURE_ART_RE.match(query_norm.strip()):
+    # 3. Separa la parte concettuale dalla parte articoli.
+    #    L'AI vede SOLO i concetti — gli articoli vengono riattaccati dopo.
+    #    Questo impedisce all'AI di toccare/duplicare i riferimenti ad articoli.
+    art_refs_expanded = _ES_ART_RE.findall(query_pre)
+    concetto = _ES_ART_RE.sub("", query_norm).strip()  # parte senza articoli (dalla query originale)
+
+    if not concetto:
+        # Solo articoli — niente da tradurre
         return query_pre, "Espansione articolo"
+
+    art_block = " " + " ".join(art_refs_expanded) if art_refs_expanded else ""
 
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{query_pre}"'},
+                {"role": "user",   "content": f'Query: "{concetto}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", query_pre)
-            # Normalizza output AI ma NON ri-espandere i codici (già espansi al passo 2)
-            final_opt = pre_processa_query(raw_opt)
+            raw_opt = d.get("query_ottimizzata", concetto)
+            final_opt = pre_processa_query(raw_opt) + art_block
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
