@@ -69,7 +69,7 @@ _FEDERAL_COURT_KEYWORDS = {
     "bundesstrafgericht", "tribunal pénal fédéral", "tribunale penale federale",
     "bundespatentgericht", "tribunale federale dei brevetti",
     "bger", "bvger", "bstger", "bpatger",
-    "bstg", "bge",  # varianti abbreviate usate nei _id ES (CH_BSTG_, CH_BGE_)
+    "bstg", "bge", "bvge",  # varianti abbreviate usate nei _id ES (CH_BSTG_, CH_BGE_, CH_BVGE_)
 }
 
 def _rileva_tipo(court_raw: str) -> str:
@@ -84,7 +84,7 @@ def _rileva_tribunal(court_raw: str) -> str:
     """Restituisce 'bger' | 'bvger' | 'bstger' | 'bpatger' | '' per i tribunali federali."""
     key = court_raw.lower().strip()
     if any(kw in key for kw in ("bundesverwaltungsgericht", "tribunal administratif fédéral",
-                                  "tribunale amministrativo federale", "bvger")):
+                                  "tribunale amministrativo federale", "bvger", "bvge")):
         return "bvger"
     if any(kw in key for kw in ("bundesstrafgericht", "tribunal pénal fédéral",
                                   "tribunale penale federale", "bstger", "bstg")):
@@ -799,7 +799,7 @@ def _es_normalize(hit: dict) -> dict:
     # Mappa gerarchia → nome tribunale leggibile
     _ES_COURT = {
         "BGER": "Tribunale federale", "BGE": "Tribunale federale",
-        "BVGER": "Tribunale amministrativo federale",
+        "BVGER": "Tribunale amministrativo federale", "BVGE": "Tribunale amministrativo federale",
         "BSTGER": "Tribunale penale federale", "BSTG": "Tribunale penale federale",
         "BPATGER": "Tribunale federale dei brevetti",
         "BGE": "Tribunale federale",
