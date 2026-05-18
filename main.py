@@ -189,7 +189,19 @@ ARTICLE_RE = re.compile(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+_ART_CONGIUNTO_RE = re.compile(
+    r'Art\.\s+(\d+[a-z]?)\s+(?:e|und|et)\s+(\d+[a-z]?)\s+(' + _CODES + r')\b',
+    re.UNICODE,
+)
+
+def _espandi_art_congiunti(testo: str) -> str:
+    """Art. 137 e 138 DBG → Art. 137 DBG Art. 138 DBG"""
+    def _sub(m: re.Match) -> str:
+        return f"Art. {m.group(1)} {m.group(3)} Art. {m.group(2)} {m.group(3)}"
+    return _ART_CONGIUNTO_RE.sub(_sub, testo)
+
 def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
+    testo = _espandi_art_congiunti(testo)
     seen, result = set(), []
     for num, code in ARTICLE_RE.findall(testo):
         code_norm = LAW_ALIASES.get(code.upper().rstrip('.'), code)
