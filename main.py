@@ -214,6 +214,20 @@ def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
             break
     return result
 
+
+def estrai_articoli_combinati(riass: str, testo: str, min_art: int = 3, max_art: int = 6) -> list[str]:
+    """Riassunto AI come fonte primaria; integra dal testo grezzo se risultano < min_art."""
+    result = estrai_articoli(riass, max_art) if riass else []
+    if len(result) < min_art and testo:
+        seen = set(result)
+        for art in estrai_articoli(testo, max_art * 3):
+            if art not in seen:
+                seen.add(art)
+                result.append(art)
+            if len(result) >= max_art:
+                break
+    return result
+
 def rileva_area(docket: str) -> str:
     return AREA_MAP.get(docket.strip()[:1], "pubblico")
 
@@ -798,9 +812,7 @@ async def _elabora_risultato_ti(
 ) -> dict:
     testo = await _fetch_full_text_ti(hit["url"], http)
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else hit["titolo"]
-    art   = estrai_articoli(testo) if testo else estrai_articoli(riass)
-    if not art and riass:
-        art = estrai_articoli(riass)
+    art = estrai_articoli_combinati(riass, testo)
     canton_label = f"{TI_COURT_NAMES.get(hit['tribunale_abbr'], hit['tribunale_nome'])} — TI"
     return {
         "rank":      rank,
@@ -1127,7 +1139,7 @@ async def _elabora_risultato(
     if ocl_statutes:
         art = ocl_statutes
     else:
-        art = estrai_articoli(riass) if riass else estrai_articoli(testo)
+        art = estrai_articoli_combinati(riass, testo)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
