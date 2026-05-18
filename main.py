@@ -572,7 +572,11 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
                     return f"{art}{cpv} {code} {alt}"
                 query_pre = _ART_CODE_RE.sub(_expand_extra, query_pre)
 
-    # 3. L'AI traduce solo i concetti e gestisce i codici SCONOSCIUTI (OASA, LAINF, ecc.)
+    # 3. L'AI traduce solo i concetti — se la query contiene SOLO articoli (nessun concetto
+    #    da tradurre) saltiamo l'AI per evitare che aggiunga varianti errate
+    if _PURE_ART_RE.match(query_norm.strip()):
+        return query_pre, "Espansione articolo"
+
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
