@@ -1100,6 +1100,48 @@ def _rerank(hits: list[dict]) -> list[dict]:
         return rel * math.log1p(cit + 1)
     return sorted(hits, key=_score, reverse=True)
 
+
+async def _ai_rerank(hits: list[dict], query: str, ai: AsyncOpenAI) -> list[dict]:
+    """Riordina i risultati per rilevanza rispetto alla query originale dell'utente.
+    Una singola chiamata GPT-4o-mini con estratti di tutti i risultati.
+    In caso di errore restituisce l'ordine originale invariato."""
+    if len(hits) <= 2 or not ai:
+        return hits
+    items = []
+    for i, h in enumerate(hits):
+        excerpt = (h.get("_es_text") or "")[:500].replace("\n", " ").strip()
+        docket  = h.get("docket_number") or h.get("codice") or f"#{i}"
+        court   = h.get("court_name") or h.get("tribunale") or ""
+        items.append(f"[{i}] {docket} ({court}): {excerpt}")
+    try:
+        resp = await ai.chat.completions.create(
+            model="gpt-4o-mini",
+            max_tokens=60,
+            temperature=0,
+            messages=[
+                {"role": "system", "content":
+                    "Sei un esperto giuridico svizzero. Valuta la rilevanza di estratti di sentenze "
+                    "rispetto alla query. Rispondi SOLO con gli indici in ordine di rilevanza decrescente, "
+                    "separati da virgola. Esempio: '2,0,4,1,3'. Nient'altro."},
+                {"role": "user", "content": f'Query: "{query}"\n\n' + "\n\n".join(items)},
+            ],
+        )
+        raw = resp.choices[0].message.content.strip()
+        indices = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+        seen, reordered = set(), []
+        for idx in indices:
+            if 0 <= idx < len(hits) and idx not in seen:
+                seen.add(idx)
+                reordered.append(hits[idx])
+        for i, h in enumerate(hits):
+            if i not in seen:
+                reordered.append(h)
+        return reordered
+    except Exception as exc:
+        log.warning("AI rerank error: %s", exc)
+        return hits
+
+
 async def _ocl_full_text(decision_id: str, http: httpx.AsyncClient) -> str:
     if not decision_id:
         return ""
@@ -1325,6 +1367,9 @@ async def cerca_stream(
 
                 # Re-rank: relevance_score × log(1 + citation_count) — BGE citate salgono
                 hits = _rerank(hits)[offset:offset + limit]
+
+                # AI re-rank: riordina per rilevanza rispetto alla query originale dell'utente
+                hits = await _ai_rerank(hits, query, ai)
 
                 if not hits:
                     if canton_filter:
