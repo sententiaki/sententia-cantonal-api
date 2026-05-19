@@ -521,25 +521,33 @@ _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
 Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
 di sentenze svizzere (Elasticsearch multilingue IT/FR/DE).
 
-Regole:
-- I riferimenti ad articoli di legge (es. "Art. 41 CO Art. 41 OR") sono GIÀ stati espansi
-  nelle lingue note dal sistema. NON toccarli, NON aggiungere nuove forme, lasciali ESATTAMENTE
-  come appaiono nella query.
-- Se la query contiene un articolo con un codice SCONOSCIUTO al sistema (es. "Art. 77a OASA",
-  "Art. 3 LAINF", "Art. 8 LDis"): espandi il codice nelle sue forme equivalenti nelle 3 lingue
-  nazionali svizzere, separando con spazio (non |).
-  Esempi:
-    "Art. 77a OASA" → "Art. 77a OASA Art. 77a AIG Art. 77a LEI"
-    "Art. 3 LAINF"  → "Art. 3 LAINF Art. 3 UVG Art. 3 LAA"
-  Se non conosci le equivalenze, restituisci identico.
-- Se la query è SOLO concettuale (nessun articolo), fornisci i concetti chiave nelle TRE
-  lingue nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
-  Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
-  Esempio: "licenziamento abusivo" → "licenziamento abusivo | missbräuchliche Kündigung | licenciement abusif"
-  Esempio: "responsabilità civile" → "responsabilità civile | Haftpflicht | responsabilité civile"
-- Se la query mescola articolo + concetto (es. "licenziamento Art. 336 CO Art. 336 OR"),
-  mantieni gli articoli INVARIATI e traduci solo la parte concettuale nelle 3 lingue.
+Regole ASSOLUTE:
+- I riferimenti ad articoli di legge (es. "Art. 41 CO Art. 41 OR") sono GIÀ gestiti dal sistema.
+  NON toccarli, NON aggiungere nuove forme, lasciali ESATTAMENTE come appaiono.
+- NON aggiungere mai sigle o abbreviazioni di leggi (es. LEI, LStrI, CO, CP, CC, OR, StGB, AIG…).
+  Usa SOLO linguaggio naturale descrittivo.
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
+
+Per query concettuali (senza articoli):
+Espandi con i termini tecnico-giuridici precisi che appaiono realmente nelle sentenze svizzere,
+nelle TRE lingue nazionali, separando le varianti linguistiche con | (OR).
+Aggiungi sinonimi giuridici, termini procedurali e varianti di registro che un giudice userebbe.
+
+Esempi:
+"licenziamento abusivo" →
+  "licenziamento abusivo disdetta abusiva | missbräuchliche Kündigung Entlassung | licenciement abusif congé"
+
+"impiego dipendenti senza permesso" →
+  "lavoratori stranieri senza autorizzazione lavoro clandestino irregolare impiego illegale | Ausländer ohne Bewilligung Schwarzarbeit illegale Beschäftigung | travailleur sans autorisation emploi illégal clandestin"
+
+"taglio pianta spazio comune" →
+  "taglio albero pianta area comune condominio proprietà vicini | Baum fällen Gemeinschaftsfläche Stockwerkeigentum Nachbarrecht | abattage arbre espace commun copropriété voisinage"
+
+"doppia imposizione" →
+  "doppia imposizione divieto | Doppelbesteuerung Verbot | double imposition interdiction"
+
+Per query miste (concetto + articolo):
+Mantieni gli articoli INVARIATI, espandi SOLO la parte concettuale nelle 3 lingue.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
@@ -1044,23 +1052,21 @@ async def _entscheidsuche_search(
             bool_q["should"] = [{"simple_query_string": {"query": non_art, "default_operator": "or"}}]
         hits = await _post({**base, "query": {"bool": bool_q}})
         if hits:
-            return _score_filter(hits)
+            return hits
         # Fallback: nessun risultato con l'articolo, ricerca soft
         log.info("No results with article filter, falling back to soft query")
         soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
-        hits = await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
-        return _score_filter(hits)
+        return await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
 
     # Nessun articolo: minimum_should_match per precisione (80% dei termini se ≥3)
     hits = await _post({**base, "query": {"simple_query_string": {
         "query": query, "default_operator": "or", "minimum_should_match": "3<80%"
     }}})
     if hits:
-        return _score_filter(hits)
+        return hits
     # Fallback: OR puro se 0 risultati
     log.info("No results with minimum_should_match, falling back to OR: %s", query[:80])
-    hits = await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
-    return _score_filter(hits)
+    return await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
 
 
 def _merge_hits(ocl: list[dict], es: list[dict]) -> list[dict]:
@@ -1313,6 +1319,9 @@ async def cerca_stream(
                 # Filtro cantone specifico
                 if canton_filter:
                     hits = [h for h in hits if _rileva_cantone(_court(h)) == canton_filter]
+
+                # Score filter: scarta risultati molto sotto il massimo (applicato dopo tutti i filtri)
+                hits = _score_filter(hits)
 
                 # Re-rank: relevance_score × log(1 + citation_count) — BGE citate salgono
                 hits = _rerank(hits)[offset:offset + limit]
