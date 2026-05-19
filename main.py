@@ -1301,9 +1301,11 @@ async def cerca_stream(
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # Se attivi filtri che restringono, prendiamo più risultati per compensare
+                # Porta sempre 80 da ES — con i filtri court/type i candidati si riducono molto
+                # (es. query in italiano: i federali sono spesso oltre i primi 32), e il
+                # re-rank AI ha bisogno di un pool ampio. Una sola request HTTP, costo invariato.
                 needs_extra = bool(tipo_filter or area_filter or tribunal_filter or canton_filter)
-                fetch_limit = limit * 4 if needs_extra else limit * 2
+                fetch_limit = 80
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
