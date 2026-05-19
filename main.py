@@ -632,9 +632,15 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
         if m:
             d = json.loads(m.group())
             raw_opt = d.get("query_ottimizzata", concetto).strip().strip('"\'')
-            # Rimuovi eventuali articoli che l'AI ha riscritto nel corpo della query:
-            # gli articoli corretti sono già in art_block (estratti dalla query originale).
-            raw_opt = _ES_ART_RE.sub("", raw_opt).strip().rstrip("|").strip()
+            # Rimuovi eventuali articoli che l'AI ha riscritto nel corpo della query.
+            # Gli articoli corretti sono già in art_block (estratti dalla query originale).
+            # Passaggio 1: strip articoli completi (Art. NNN CODE)
+            raw_opt = _ES_ART_RE.sub("", raw_opt)
+            # Passaggio 2: strip residui "NNN SIGLA" lasciati da articoli malformati
+            #   es. "Art. 102 Art. 339 CO" → dopo strip → " 339 CO" → va rimosso
+            raw_opt = re.sub(r'\b\d+[a-z]{0,8}\s+[A-Z][A-Za-z]{0,7}\.?\b', "", raw_opt)
+            raw_opt = re.sub(r'\s*\.\s*(?=\||$)', " ", raw_opt)   # rimuovi punti isolati rimasti
+            raw_opt = raw_opt.strip().rstrip("|").strip()
             final_opt = pre_processa_query(raw_opt) + art_block
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
