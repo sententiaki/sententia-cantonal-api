@@ -24,9 +24,6 @@ import logging
 import math
 import os
 import re
-import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from typing import AsyncIterator, Optional
 
 import httpx
@@ -35,7 +32,6 @@ from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from openai import AsyncOpenAI
-from pydantic import BaseModel
 
 # ── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -46,7 +42,7 @@ app = FastAPI(title="Sententia Search API", version="2.0.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_methods=["GET", "OPTIONS"],
     allow_headers=["*"],
 )
 
@@ -65,11 +61,9 @@ HTTP_HEADERS = {
 # Tribunali federali riconosciuti (tutto il resto è cantonale)
 _FEDERAL_COURT_KEYWORDS = {
     "bundesgericht", "tribunal fédéral", "tribunale federale",
-    "bundesverwaltungsgericht", "tribunal administratif fédéral", "tribunale amministrativo federale",
-    "bundesstrafgericht", "tribunal pénal fédéral", "tribunale penale federale",
-    "bundespatentgericht", "tribunale federale dei brevetti",
-    "bger", "bvger", "bstger", "bpatger",
-    "bstg", "bge", "bvge",  # varianti abbreviate usate nei _id ES (CH_BSTG_, CH_BGE_, CH_BVGE_)
+    "bundesverwaltungsgericht", "tribunal administratif fédéral",
+    "bundesstrafgericht", "tribunal pénal fédéral",
+    "bundespatentgericht", "bger", "bvger", "bstger", "bpatger",
 }
 
 def _rileva_tipo(court_raw: str) -> str:
@@ -84,10 +78,10 @@ def _rileva_tribunal(court_raw: str) -> str:
     """Restituisce 'bger' | 'bvger' | 'bstger' | 'bpatger' | '' per i tribunali federali."""
     key = court_raw.lower().strip()
     if any(kw in key for kw in ("bundesverwaltungsgericht", "tribunal administratif fédéral",
-                                  "tribunale amministrativo federale", "bvger", "bvge")):
+                                  "tribunale amministrativo federale", "bvger")):
         return "bvger"
     if any(kw in key for kw in ("bundesstrafgericht", "tribunal pénal fédéral",
-                                  "tribunale penale federale", "bstger", "bstg")):
+                                  "tribunale penale federale", "bstger")):
         return "bstger"
     if any(kw in key for kw in ("bundespatentgericht", "bpatger")):
         return "bpatger"
@@ -98,32 +92,11 @@ def _rileva_tribunal(court_raw: str) -> str:
 
 # Parole chiave per riconoscere il cantone dal nome del tribunale
 _CANTON_KEYWORDS: dict[str, list[str]] = {
-    "ag": ["aargau", "argovia", "argovie"],
-    "ai": ["appenzell innerrhoden", "appenzello interno"],
-    "ar": ["appenzell ausserrhoden", "appenzello esterno"],
-    "be": ["bern", "berne", "berna"],
-    "bl": ["basel-landschaft", "basilea campagna", "bâle-campagne"],
-    "bs": ["basel-stadt", "basilea città", "bâle-ville"],
-    "fr": ["freiburg", "friburgo", "fribourg"],
-    "ge": ["genf", "genève", "geneve", "ginevra", "canton de genève", "kanton genf"],
-    "gl": ["glarus", "glarona", "glaris"],
-    "gr": ["graubünden", "grigioni", "grisons"],
-    "ju": ["jura", "giura"],
-    "lu": ["luzern", "lucerna", "lucerne"],
-    "ne": ["neuenburg", "neuchâtel", "neuchatel"],
-    "nw": ["nidwalden", "nidvaldo", "nidwald"],
-    "ow": ["obwalden", "obvaldo", "obwald"],
-    "sg": ["st. gallen", "san gallo", "saint-gall"],
-    "sh": ["schaffhausen", "sciaffusa", "schaffhouse"],
-    "so": ["solothurn", "soletta", "soleure"],
-    "sz": ["schwyz", "svitto", "schwytz"],
-    "tg": ["thurgau", "turgovia", "thurgovie"],
-    "ti": ["ticino", "tessin"],
-    "ur": ["uri"],
+    "ti": ["ticino"],
+    "zh": ["zürich", "zurich"],
+    "be": ["bern", "berne"],
+    "ge": ["genf", "genève", "geneve", "canton de genève", "kanton genf"],
     "vd": ["vaud", "waadt"],
-    "vs": ["wallis", "vallese", "valais"],
-    "zg": ["zug", "zugo", "zoug"],
-    "zh": ["zürich", "zurich", "zurigo"],
 }
 
 def _rileva_cantone(court_raw: str) -> str:
@@ -178,31 +151,18 @@ _CODES = (
     "|LFus|FusG|LDIP|IPRG|PA|VwVG"
 )
 # Cattura: "Art.? N [cpv/abs/al/lett N] CODE"  oppure  "articolo N CODE"
-# Il codice legge può essere qualsiasi sigla che inizia con maiuscola (2-8 char)
 ARTICLE_RE = re.compile(
-    r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]{0,8})'
-    r'(?:\s+(?:[Cc]pv|[Aa]bs|[Aa]l|[Ll]ett?|[Ll]it|[Zz]iff|ch|[Nn]r)\.?\s*[a-z\d]+)?'
+    r'(?:[Aa]rt(?:icol[oi])?\.?\s+)(\d+[a-z]?)'
+    r'(?:\s+(?:cpv|abs|al|lett?|lit)\.?\s*\d+)?'
     r'(?:\s+(?:del|della|des?|von|du|de\s+la))?'
-    r'\s+([A-Z][A-Za-z]{1,7}\.?)\b',
+    r'\s+(' + _CODES + r')\b',
     re.UNICODE,
 )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-_ART_CONGIUNTO_RE = re.compile(
-    r'Art\.\s+(\d+[a-z]{0,8})\s+(?:e|und|et)\s+(\d+[a-z]{0,8})\s+(' + _CODES + r')\b',
-    re.UNICODE,
-)
-
-def _espandi_art_congiunti(testo: str) -> str:
-    """Art. 137 e 138 DBG → Art. 137 DBG Art. 138 DBG"""
-    def _sub(m: re.Match) -> str:
-        return f"Art. {m.group(1)} {m.group(3)} Art. {m.group(2)} {m.group(3)}"
-    return _ART_CONGIUNTO_RE.sub(_sub, testo)
-
 def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
-    testo = _espandi_art_congiunti(testo)
     seen, result = set(), []
     for num, code in ARTICLE_RE.findall(testo):
         code_norm = LAW_ALIASES.get(code.upper().rstrip('.'), code)
@@ -212,20 +172,6 @@ def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
             result.append(label)
         if len(result) >= max_art:
             break
-    return result
-
-
-def estrai_articoli_combinati(riass: str, testo: str, min_art: int = 3, max_art: int = 6) -> list[str]:
-    """Riassunto AI come fonte primaria; integra dal testo grezzo se risultano < min_art."""
-    result = estrai_articoli(riass, max_art) if riass else []
-    if len(result) < min_art and testo:
-        seen = set(result)
-        for art in estrai_articoli(testo, max_art * 3):
-            if art not in seen:
-                seen.add(art)
-                result.append(art)
-            if len(result) >= max_art:
-                break
     return result
 
 def rileva_area(docket: str) -> str:
@@ -304,18 +250,18 @@ _LAW_NAME_PATTERNS: list[tuple[re.Pattern, str]] = [
 # Normalizza varianti di "articolo/article/artikel/art" → "Art. NNN"
 # Cattura anche "art.111" (senza spazio) e "art 111" (senza punto)
 _QUERY_ART_RE = re.compile(
-    r'\b(articol[oi]|article|artikel|art)\.?\s*(\d+[a-z]{0,8})',
+    r'\b(articol[oi]|article|artikel|art)\.?\s*(\d+[a-z]?)',
     re.IGNORECASE | re.UNICODE,
 )
 # Rimuove preposizioni residue: "Art. 111 del CP" → "Art. 111 CP"
 _QUERY_DEL_RE = re.compile(
-    r'(Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv|abs|al|Abs)\.?\s*\d+)?)\s+'
+    r'(Art\.\s+\d+[a-z]?(?:\s+(?:cpv|abs|al|Abs)\.?\s*\d+)?)\s+'
     r'(?:del|della|der|des|de\s+la|du|von|di)\s+',
     re.IGNORECASE,
 )
 # Riordina "CODICE Art. NNN" → "Art. NNN CODICE" (es. "CO Art. 97" → "Art. 97 CO")
 _QUERY_CODE_BEFORE_ART_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(Art\.\s+\d+[a-z]{0,8})',
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|SchKG)\s+(Art\.\s+\d+[a-z]?)',
     re.IGNORECASE,
 )
 # Mappa codici → forma canonica (gestisce maiuscole/minuscole)
@@ -342,14 +288,14 @@ _AL_NODOT_RE  = re.compile(r'\bal\s+(\d+)',    re.I)
 # "N CODE" senza prefisso Art. — cattura anche "N cpv/Abs/al N CODE"
 _BARE_NUM_CODE_RE = re.compile(
     r'(?<!\w)'
-    r'(\d+[a-z]{0,8})'
+    r'(\d+[a-z]?)'
     r'(\s+(?:cpv\.?|Abs\.?|al\.?)\s*\d+)?'
     r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
     re.UNICODE | re.IGNORECASE,
 )
 # "CODE N" senza prefisso Art.  (es. "OR 50", "StGB 111", "or 50")
 _CODE_BARE_NUM_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]{0,8})\b',
+    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]?)\b',
     re.UNICODE | re.IGNORECASE,
 )
 
@@ -407,7 +353,7 @@ def pre_processa_query(query: str) -> str:
     result = ''.join(parts)
     # 7. Riordina "cpv./Abs. N Art. N CODE" → "Art. N cpv./Abs. N CODE"
     result = re.sub(
-        r'\b(cpv\.|Abs\.|al\.)\s*(\d+)\s+(Art\.\s+\d+[a-z]{0,8})',
+        r'\b(cpv\.|Abs\.|al\.)\s*(\d+)\s+(Art\.\s+\d+[a-z]?)',
         lambda m: f"{m.group(3)} {m.group(1)} {m.group(2)}",
         result, flags=re.IGNORECASE,
     )
@@ -441,9 +387,6 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
     # Imposta federale diretta — IT/FR = LIFD, DE = DBG
     "LIFD":  ["DBG"],           # IT/FR → DE
     "DBG":   ["LIFD"],          # DE → IT/FR
-    # Concorrenza sleale — IT/FR = LCD, DE = UWG
-    "LCD":   ["UWG"],
-    "UWG":   ["LCD"],
     # DE → IT + FR
     "StGB":  ["CP"],
     "ZGB":   ["CC"],
@@ -458,16 +401,16 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
 
 # Trova "Art. NNN [cpv./Abs./al. N] CODE" nella query già normalizzata
 _ART_CODE_RE = re.compile(
-    r'(Art\.\s+\d+[a-z]{0,8})'
+    r'(Art\.\s+\d+[a-z]?)'
     r'(\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'\s+([A-Z][A-Za-z]{0,7}\.?)\b',
+    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
     re.UNICODE,
 )
 
 # Riconosce una query che è SOLO un riferimento articolo (nessun concetto aggiuntivo)
 _PURE_ART_RE = re.compile(
-    r'^Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'(?:\s+[A-Z][A-Za-z]{0,7}\.?)+\s*$',
+    r'^Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
+    r'(?:\s+(?:CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD))+\s*$',
     re.UNICODE,
 )
 
@@ -519,126 +462,48 @@ def espandi_codici_articolo(query: str) -> str:
 
 _OPTIMIZER_SYSTEM = """Sei un esperto di ricerca giuridica svizzera.
 Trasforma la query dell'utente in termini di ricerca ottimali per un motore full-text
-di sentenze svizzere (Elasticsearch multilingue IT/FR/DE).
+di sentenze federali svizzere (Elasticsearch multilingue IT/FR/DE).
 
-Regole ASSOLUTE:
-- I riferimenti ad articoli di legge (es. "Art. 41 CO Art. 41 OR") sono GIÀ gestiti dal sistema.
-  NON toccarli, NON aggiungere nuove forme, lasciali ESATTAMENTE come appaiono.
-- NON aggiungere mai sigle o abbreviazioni di leggi (es. LEI, LStrI, CO, CP, CC, OR, StGB, AIG…).
-  Usa SOLO linguaggio naturale descrittivo.
+Regole:
+- Se la query contiene riferimenti ad articoli di legge, mantienili ESATTAMENTE come sono.
+  NON aggiungere, modificare o tradurre sigle di legge — ci pensa il sistema.
+- Per query concettuali (senza articoli), fornisci i concetti chiave nelle TRE lingue
+  nazionali svizzere, separando le varianti linguistiche con | (operatore OR).
+  Esempio: "doppia imposizione" → "doppia imposizione | Doppelbesteuerung | double imposition"
+  Esempio: "licenziamento abusivo" → "licenziamento abusivo | missbräuchliche Kündigung | licenciement abusif"
+  Esempio: "responsabilità civile" → "responsabilità civile | Haftpflicht | responsabilité civile"
+  Esempio: "diritto d'autore" → "diritto d'autore | Urheberrecht | droit d'auteur"
 - Se la query è un codice sentenza (es. 6B_51/2021, BGE 147 IV 73), restituiscila com'è.
-
-Per query concettuali (senza articoli):
-Espandi con i termini tecnico-giuridici precisi che appaiono realmente nelle sentenze svizzere,
-nelle TRE lingue nazionali, separando le varianti linguistiche con | (OR).
-Aggiungi sinonimi giuridici, termini procedurali e varianti di registro che un giudice userebbe.
-
-Esempi:
-"licenziamento abusivo" →
-  "licenziamento abusivo disdetta abusiva | missbräuchliche Kündigung Entlassung | licenciement abusif congé"
-
-"impiego dipendenti senza permesso" →
-  "lavoratori stranieri senza autorizzazione lavoro clandestino irregolare impiego illegale | Ausländer ohne Bewilligung Schwarzarbeit illegale Beschäftigung | travailleur sans autorisation emploi illégal clandestin"
-
-"taglio pianta spazio comune" →
-  "taglio albero pianta area comune condominio proprietà vicini | Baum fällen Gemeinschaftsfläche Stockwerkeigentum Nachbarrecht | abattage arbre espace commun copropriété voisinage"
-
-"doppia imposizione" →
-  "doppia imposizione divieto | Doppelbesteuerung Verbot | double imposition interdiction"
-
-Per query miste (concetto + articolo):
-Mantieni gli articoli INVARIATI, espandi SOLO la parte concettuale nelle 3 lingue.
 
 Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 
-async def _ocl_legge_espandi(code: str, http: httpx.AsyncClient) -> list[str]:
-    """Chiama OCL per ottenere le sigle equivalenti nelle 3 lingue per un codice sconosciuto.
-    Ritorna lista delle sigle diverse dal codice originale (es. ["VZAE"] per "OASA").
-    In caso di errore o timeout ritorna lista vuota."""
-    try:
-        results = await asyncio.gather(
-            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "de"}, timeout=3.0),
-            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "fr"}, timeout=3.0),
-            http.get(f"{OPENCASELAW_BASE}/laws/{code}", params={"language": "it"}, timeout=3.0),
-            return_exceptions=True,
-        )
-        abbrs = []
-        for r in results:
-            if isinstance(r, Exception):
-                continue
-            if r.status_code == 200:
-                abbr = r.json().get("abbreviation", "")
-                if abbr and abbr != code and abbr not in abbrs:
-                    abbrs.append(abbr)
-        return abbrs
-    except Exception:
-        return []
-
-
-async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient | None = None) -> tuple[str, str]:
+async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
     # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN CODE"
     query_norm = pre_processa_query(query)
-    # 2. Espandi i codici NOTI deterministicamente (CO→OR, CP→StGB, LCD→UWG, ecc.)
-    #    PRIMA dell'AI, così l'AI non deve toccarli e non può duplicarli
-    query_pre = espandi_codici_articolo(query_norm)
 
-    # 2b. Per i codici SCONOSCIUTI (non in _CODE_EQUIVALENTS), lookup OCL in parallelo
-    if http:
-        unknown_codes = [
-            m.group(3) for m in _ART_CODE_RE.finditer(query_norm)
-            if m.group(3) not in _CODE_EQUIVALENTS
-        ]
-        if unknown_codes:
-            lookup_results = await asyncio.gather(
-                *[_ocl_legge_espandi(c, http) for c in unknown_codes],
-                return_exceptions=True,
-            )
-            extra_map: dict[str, list[str]] = {}
-            for code, res in zip(unknown_codes, lookup_results):
-                if isinstance(res, list) and res:
-                    extra_map[code] = res
-            if extra_map:
-                def _expand_extra(m: re.Match) -> str:
-                    art, cpv, code = m.group(1), m.group(2) or "", m.group(3)
-                    extras = extra_map.get(code, [])
-                    if not extras:
-                        return m.group(0)
-                    alt = " ".join(f"{art} {e}" for e in extras)
-                    return f"{art}{cpv} {code} {alt}"
-                query_pre = _ART_CODE_RE.sub(_expand_extra, query_pre)
-
-    # 3. Separa la parte concettuale dalla parte articoli.
-    #    L'AI vede SOLO i concetti — gli articoli vengono riattaccati dopo.
-    #    Questo impedisce all'AI di toccare/duplicare i riferimenti ad articoli.
-    art_refs_expanded = _ES_ART_RE.findall(query_pre)
-    concetto = _ES_ART_RE.sub("", query_norm).strip()  # parte senza articoli (dalla query originale)
-
-    if not concetto:
-        # Solo articoli — niente da tradurre
-        return query_pre, "Espansione articolo"
-
-    art_block = " " + " ".join(art_refs_expanded) if art_refs_expanded else ""
-
+    # 2. L'AI ottimizza i concetti (NON tocca i codici legge)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=150, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{concetto}"'},
+                {"role": "user",   "content": f'Query: "{query_norm}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", concetto)
-            final_opt = pre_processa_query(raw_opt) + art_block
+            raw_opt = d.get("query_ottimizzata", query_norm)
+            # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
+            # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico
+            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
 
     # Fallback se AI non disponibile
-    return query_pre, "Query diretta"
+    return espandi_codici_articolo(query_norm), "Query diretta"
 
 
 # ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
@@ -820,7 +685,9 @@ async def _elabora_risultato_ti(
 ) -> dict:
     testo = await _fetch_full_text_ti(hit["url"], http)
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else hit["titolo"]
-    art = estrai_articoli_combinati(riass, testo)
+    art   = estrai_articoli(testo) if testo else estrai_articoli(riass)
+    if not art and riass:
+        art = estrai_articoli(riass)
     canton_label = f"{TI_COURT_NAMES.get(hit['tribunale_abbr'], hit['tribunale_nome'])} — TI"
     return {
         "rank":      rank,
@@ -884,23 +751,14 @@ def _es_normalize(hit: dict) -> dict:
     src       = hit.get("_source", {})
     doc_id    = hit.get("_id", "")
     hierarchy = src.get("hierarchy", [])
-    # Extract court key from doc_id parts:
-    #   CH_BVGE_001_...  → parts[1] = "BVGE"  (federal: use position 1)
-    #   GR_VG_001_...    → parts[0] = "GR"    (cantonal: use position 0)
-    # hierarchy[0] = "CH" for all federal courts → useless for court identification
-    id_parts  = doc_id.split("_")
-    if len(id_parts) > 1 and id_parts[0].upper() == "CH":
-        court_key = id_parts[1].upper()   # BGER, BVGE, BGE, BSTGER, BPATGER
-    else:
-        court_key = (id_parts[0] if id_parts else (hierarchy[0] if hierarchy else "")).upper()
+    court_key = hierarchy[0].upper() if hierarchy else ""
 
     # Mappa gerarchia → nome tribunale leggibile
     _ES_COURT = {
         "BGER": "Tribunale federale", "BGE": "Tribunale federale",
-        "BVGER": "Tribunale amministrativo federale", "BVGE": "Tribunale amministrativo federale",
-        "BSTGER": "Tribunale penale federale", "BSTG": "Tribunale penale federale",
+        "BVGER": "Tribunale amministrativo federale",
+        "BSTGER": "Tribunale penale federale",
         "BPATGER": "Tribunale federale dei brevetti",
-        "BGE": "Tribunale federale",
         "AG": "Aargau", "BE": "Berna", "BL": "Basilea Campagna",
         "BS": "Basilea Città", "FR": "Friburgo", "GE": "Ginevra",
         "GL": "Glarona", "GR": "Grigioni", "JU": "Giura",
@@ -989,77 +847,31 @@ def _es_normalize(hit: dict) -> dict:
         "decision_id":    "",
         "_es_text":       (full_text or abstract)[:50_000],
         "_es_id":         doc_id,
-        "_es_score":      float(hit.get("_score") or 0),
     }
 
 
-_ES_ART_RE = re.compile(
-    r'Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
-    re.UNICODE,
-)
-
-def _score_filter(hits: list[dict], ratio: float = 0.05) -> list[dict]:
-    """Scarta risultati il cui score è < ratio * score_massimo. Non ritorna mai lista vuota."""
-    if not hits:
-        return hits
-    max_s = max(h.get("_es_score", 0) for h in hits)
-    if max_s <= 0:
-        return hits
-    filtered = [h for h in hits if h.get("_es_score", 0) >= max_s * ratio]
-    return filtered if filtered else hits
-
-
-def _prepara_query_es(query: str) -> tuple[str, str]:
-    """Separa la query in (phrase_block, non_art).
-
-    phrase_block: articoli come phrase queries slop-2 ("Art. 41 CO"~2 | "Art. 41 OR"~2)
-    non_art:      resto delle parole (linguaggio naturale)
-    """
-    art_refs    = _ES_ART_RE.findall(query)
-    parts       = _ES_ART_RE.split(query)
-    non_art     = " ".join(p.strip() for p in parts if p.strip() and not _ES_ART_RE.fullmatch(p.strip()))
-    phrase_block = " | ".join(f'"{ref.strip()}"~2' for ref in art_refs)
-    return phrase_block, non_art
-
-
 async def _entscheidsuche_search(
-    query: str, limit: int, http: httpx.AsyncClient, offset: int = 0
+    query: str, limit: int, http: httpx.AsyncClient
 ) -> list[dict]:
-    """Ricerca su entscheidsuche.ch.
-
-    Se la query contiene articoli di legge:
-      - fase 1 (strict): bool must=articolo + should=keywords → tutti i risultati contengono l'articolo
-      - fase 2 (fallback): solo se fase 1 → 0 risultati, query soft senza filtro articolo
-    Se la query non contiene articoli: simple_query_string ordinario.
-    """
-    phrase_block, non_art = _prepara_query_es(query)
-
-    async def _post(payload: dict) -> list[dict]:
-        try:
-            r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
-            r.raise_for_status()
-            return [_es_normalize(h) for h in r.json().get("hits", {}).get("hits", [])]
-        except Exception as exc:
-            log.warning("Entscheidsuche search error: %s", repr(exc))
-            return []
-
-    base = {"from": offset, "size": limit, "sort": [{"_score": {"order": "desc"}}]}
-
-    if phrase_block:
-        # Articolo obbligatorio (must), keywords aumentano score (should)
-        bool_q: dict = {"must": [{"simple_query_string": {"query": phrase_block, "default_operator": "or"}}]}
-        if non_art:
-            bool_q["should"] = [{"simple_query_string": {"query": non_art, "default_operator": "or"}}]
-        hits = await _post({**base, "query": {"bool": bool_q}})
-        if hits:
-            return hits
-        # Fallback: nessun risultato con l'articolo, ricerca soft
-        log.info("No results with article filter, falling back to soft query")
-        soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
-        return await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
-
-    # Nessun articolo: OR per massimizzare i candidati — il re-rank AI seleziona i rilevanti
-    return await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
+    """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
+    payload = {
+        "query": {
+            "simple_query_string": {
+                "query": query,
+                "default_operator": "or",
+            }
+        },
+        "size": limit,
+        "sort": [{"_score": {"order": "desc"}}],
+    }
+    try:
+        r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
+        r.raise_for_status()
+        hits = r.json().get("hits", {}).get("hits", [])
+        return [_es_normalize(h) for h in hits]
+    except Exception as exc:
+        log.warning("Entscheidsuche search error: %s", repr(exc))
+        return []
 
 
 def _merge_hits(ocl: list[dict], es: list[dict]) -> list[dict]:
@@ -1092,48 +904,6 @@ def _rerank(hits: list[dict]) -> list[dict]:
         cit = int(h.get("citation_count") or 0)
         return rel * math.log1p(cit + 1)
     return sorted(hits, key=_score, reverse=True)
-
-
-async def _ai_rerank(hits: list[dict], query: str, ai: AsyncOpenAI) -> list[dict]:
-    """Riordina i risultati per rilevanza rispetto alla query originale dell'utente.
-    Una singola chiamata GPT-4o-mini con estratti di tutti i risultati.
-    In caso di errore restituisce l'ordine originale invariato."""
-    if len(hits) <= 2 or not ai:
-        return hits
-    items = []
-    for i, h in enumerate(hits):
-        excerpt = (h.get("_es_text") or "")[:500].replace("\n", " ").strip()
-        docket  = h.get("docket_number") or h.get("codice") or f"#{i}"
-        court   = h.get("court_name") or h.get("tribunale") or ""
-        items.append(f"[{i}] {docket} ({court}): {excerpt}")
-    try:
-        resp = await ai.chat.completions.create(
-            model="gpt-4o-mini",
-            max_tokens=60,
-            temperature=0,
-            messages=[
-                {"role": "system", "content":
-                    "Sei un esperto giuridico svizzero. Valuta la rilevanza di estratti di sentenze "
-                    "rispetto alla query. Rispondi SOLO con gli indici in ordine di rilevanza decrescente, "
-                    "separati da virgola. Esempio: '2,0,4,1,3'. Nient'altro."},
-                {"role": "user", "content": f'Query: "{query}"\n\n' + "\n\n".join(items)},
-            ],
-        )
-        raw = resp.choices[0].message.content.strip()
-        indices = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
-        seen, reordered = set(), []
-        for idx in indices:
-            if 0 <= idx < len(hits) and idx not in seen:
-                seen.add(idx)
-                reordered.append(hits[idx])
-        for i, h in enumerate(hits):
-            if i not in seen:
-                reordered.append(h)
-        return reordered
-    except Exception as exc:
-        log.warning("AI rerank error: %s", exc)
-        return hits
-
 
 async def _ocl_full_text(decision_id: str, http: httpx.AsyncClient) -> str:
     if not decision_id:
@@ -1177,6 +947,7 @@ def _hit_to_meta(hit: dict, rank: int) -> dict:
         "url":            url_final,
         "decision_id":    hit.get("decision_id", ""),
         "citation_count": int(hit.get("citation_count") or 0),
+        "ocl_statutes":   hit.get("statutes") or [],
     }
 
 async def _elabora_risultato(
@@ -1195,8 +966,14 @@ async def _elabora_risultato(
         # ES hit senza testo precaricato: scarica direttamente da bger.li
         testo = await _fetch_bger_text(meta["url"], http) if meta.get("url") else ""
     riass = await genera_riassunto(testo, lang, ai) if (ai and testo) else ""
-    # Articoli: estratti dal riassunto AI (coerente col testo mostrato) → fallback testo grezzo
-    art = estrai_articoli_combinati(riass, testo)
+    # Priorità articoli: campo statutes strutturato di OCL → testo completo → riassunto
+    ocl_statutes = meta.pop("ocl_statutes", [])
+    if ocl_statutes:
+        art = ocl_statutes
+    else:
+        art = estrai_articoli(testo) if testo else estrai_articoli(riass)
+        if not art and riass:
+            art = estrai_articoli(riass)
     return {**meta, "riassunto": riass, "articoli": art}
 
 
@@ -1216,7 +993,7 @@ async def cerca(
     ai      = AsyncOpenAI(api_key=api_key) if api_key else None
 
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
-        query_opt, spiegazione = await ottimizza_query(query, ai, http) if ai else (query, "")
+        query_opt, spiegazione = await ottimizza_query(query, ai) if ai else (query, "")
         log.info("cerca: '%s' → '%s' | lang=%s limit=%d", query, query_opt, lang, limit)
 
         hits = await _ocl_search(query_opt, limit * 2, http)
@@ -1296,22 +1073,19 @@ async def cerca_stream(
 
                 yield sse({"type": "status", "message": "Ottimizzazione query..."})
                 if ai:
-                    query_opt, spiegazione = await ottimizza_query(query, ai, http)
+                    query_opt, spiegazione = await ottimizza_query(query, ai)
                 else:
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # Porta sempre 80 da ES — con i filtri court/type i candidati si riducono molto
-                # (es. query in italiano: i federali sono spesso oltre i primi 32), e il
-                # re-rank AI ha bisogno di un pool ampio. Una sola request HTTP, costo invariato.
+                # Se attivi filtri che restringono, prendiamo più risultati per compensare
                 needs_extra = bool(tipo_filter or area_filter or tribunal_filter or canton_filter)
-                fetch_limit = 80
+                fetch_limit = limit * 4 if needs_extra else limit * 2
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # entscheidsuche primario: fetch sempre da from=0 con size più grande,
-                # poi slice [offset:offset+limit] dopo rerank per paginazione stabile
-                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit + offset, 80), http, offset=0)
+                # entscheidsuche primario (veloce, affidabile) — OCL fallback se ES torna vuoto
+                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit, 20), http)
                 # Federal IDs start with CH_; filter based on requested court mode
                 if tipo_filter == "cantonal":
                     hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
@@ -1351,12 +1125,8 @@ async def cerca_stream(
                     return h.get("court_name") or h.get("court") or ""
 
                 # Filtro tipo (federal / cantonal)
-                # ES hits already pre-filtered by CH_ prefix — skip redundant _rileva_tipo check.
-                # Only apply to OCL fallback results (which have no _es_id).
                 if tipo_filter in ("federal", "cantonal"):
-                    hits = [h for h in hits
-                            if h.get("_es_id")  # ES: already filtered correctly above
-                            or _rileva_tipo(_court(h)) == tipo_filter]
+                    hits = [h for h in hits if _rileva_tipo(_court(h)) == tipo_filter]
 
                 # Filtro tribunale specifico (bger / bvger / bstger)
                 if tribunal_filter:
@@ -1366,22 +1136,14 @@ async def cerca_stream(
                 if canton_filter:
                     hits = [h for h in hits if _rileva_cantone(_court(h)) == canton_filter]
 
-                # Score filter: scarta risultati molto sotto il massimo (applicato dopo tutti i filtri)
-                hits = _score_filter(hits)
-
                 # Re-rank: relevance_score × log(1 + citation_count) — BGE citate salgono
-                hits = _rerank(hits)[offset:offset + limit]
-
-                # AI re-rank: riordina per rilevanza rispetto alla query originale dell'utente
-                hits = await _ai_rerank(hits, query, ai)
+                hits = _rerank(hits)[:limit]
 
                 if not hits:
                     if canton_filter:
                         msg = f"Nessuna sentenza trovata per il cantone '{canton_filter.upper()}' su OpenCaseLaw."
-                    elif tipo_filter == "federal":
-                        msg = "Nessuna sentenza federale trovata per questa ricerca."
                     elif tipo_filter == "cantonal":
-                        msg = "Nessuna sentenza cantonale trovata per questa ricerca."
+                        msg = "Nessuna sentenza cantonale trovata per questa ricerca su OpenCaseLaw."
                     elif tribunal_filter:
                         msg = f"Nessuna sentenza trovata per il tribunale '{tribunal_filter.upper()}'."
                     elif area_filter:
@@ -1543,41 +1305,98 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         return JSONResponse({"errore": "OPENAI_API_KEY non configurata."}, status_code=500)
     lang = lang if lang in ("it", "de", "fr") else "it"
 
-    source = "bger.li"
+    # ── Validazione formato codice sentenza ──────────────────────────────────
+    # Rifiuta immediatamente parole chiave, articoli di legge, ecc.
+    # Formati validi: 6B_302/2023 | F-2684/2026 | 143 II 268 | BGE_134_III_67
+    _DOCKET_RE = re.compile(
+        r"""
+        (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?   # prefisso opzionale
+        (?:
+            [1-9][A-Z]{0,3}_\d+/\d{4}           # 6B_302/2023
+          | [A-Z]{1,3}[-_]\d+[/_-]\d{2,4}        # F-2684/2026 / SK.2023.1
+          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+       # 143 II 268 / 134_III_67
+          | \d{1,4}\.\d{4}\.\d+                  # 52.2015.575 / 42.2025.11 (cantonal)
+        )
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
+    if not _DOCKET_RE.search(codice.strip()):
+        _invalid_msg = {
+            "it": (f"'{codice}' non è un codice sentenza. Inserisci un numero di ruolo "
+                   f"come 6B_302/2023 o BGE 143 II 268. Per cercare per tema usa Smart Search."),
+            "de": (f"'{codice}' ist keine Urteilsnummer. Gib eine Dossiernummer ein wie "
+                   f"6B_302/2023 oder BGE 143 II 268. Für die thematische Suche verwende Smart Search."),
+            "fr": (f"'{codice}' n'est pas un numéro d'arrêt. Entrez un numéro de dossier "
+                   f"comme 6B_302/2023 ou BGE 143 II 268. Pour rechercher par thème, utilisez Smart Search."),
+        }
+        return JSONResponse({"errore": _invalid_msg[lang]}, status_code=400)
+
+    source = "opencaselaw.ch"
     async with httpx.AsyncClient(headers=HTTP_HEADERS, follow_redirects=True) as http:
         hit: dict = {}
         full_text = ""
 
-        # ── 1. bger.li: accesso diretto tramite URL costruita dal codice ────────
-        bger_url = costruisci_url_bger(codice)
-        full_text = await _fetch_bger_text(bger_url, http)
-        if full_text:
-            hit = {"docket_number": codice, "court_name": "BGer", "decision_date": "", "url": bger_url}
-            log.info("bger.li OK for '%s': %s", codice, bger_url)
+        if decision_id:
+            # Percorso veloce: abbiamo già decision_id, recupera testo direttamente
+            full_text = await _ocl_full_text(decision_id, http)
+            # Cerca comunque i metadati (per tribunale, data, statutes)
+            hits_meta = await _ocl_search(codice, 1, http)
+            hit = hits_meta[0] if hits_meta else {}
         else:
-            # ── 2. Fallback ES: cerca su entscheidsuche per numero di ruolo ────
-            log.info("bger.li miss for '%s', trying entscheidsuche", codice)
-            source = "entscheidsuche.ch"
+            # ── 1. OCL: ricerca semantica con match esatto sul docket_number ──
             norm_input = _normalize_codice(codice)
-            # Normalizza separatori per ES: "80-2017-7" → "80.2017.7"
-            # ES interpreta "-" come negazione in simple_query_string
-            codice_es = re.sub(r'(\d+)[-_](\d{4})[-_](\d+)', r'\1.\2.\3', codice.strip())
-            es_hits = await _entscheidsuche_search(codice_es, 10, http)
-            # Preferisce match esatto sul docket number, altrimenti il primo risultato
-            exact = [h for h in es_hits
-                     if _normalize_codice(h.get("docket_number") or "") == norm_input]
-            best = exact[0] if exact else None
-            if best:
-                full_text = best.get("_es_text") or ""
-                if not full_text and best.get("url"):
-                    full_text = await _fetch_bger_text(best["url"], http)
-                hit = best
-                log.info("ES fallback OK for '%s': docket=%s", codice, best.get("docket_number"))
+
+            def _find_exact(hits: list[dict]) -> list[dict]:
+                return [h for h in hits
+                        if _normalize_codice(
+                            h.get("docket_number") or h.get("file_number") or ""
+                        ) == norm_input]
+
+            # Prova varianti di query per massimizzare la copertura OCL:
+            # 1. codice senza prefisso tribunale (es. 'BVGer F-2684/2026' → 'F-2684/2026')
+            #    → messo PRIMO perché più preciso per OCL
+            # 2. originale
+            # 3. separatori → spazio
+            bare_codice = re.sub(
+                r'^(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+', '',
+                codice, flags=re.IGNORECASE,
+            ).strip()
+            queries = [bare_codice] if bare_codice != codice else [codice]
+            if codice not in queries:
+                queries.append(codice)
+            alt_sep = re.sub(r'[/_\-]', ' ', codice).strip()
+            if alt_sep not in queries:
+                queries.append(alt_sep)
+            alt_bare = re.sub(r'[\s_\-/]', '', bare_codice)
+            if alt_bare not in queries:
+                queries.append(alt_bare)
+
+            exact: list[dict] = []
+            for q in queries:
+                hits_q = await _ocl_search(q, 20, http)
+                exact = _find_exact(hits_q)
+                if exact:
+                    break
+
+            if exact:
+                # Match esatto trovato su OCL
+                hit = exact[0]
+                full_text = await _ocl_full_text(hit.get("decision_id", ""), http)
             else:
-                return JSONResponse(
-                    {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
-                    status_code=404,
-                )
+                # ── 2. Fallback bger.li: fetch diretto per URL costruita dal codice ──
+                # OCL è ricerca semantica e non garantisce di restituire la decisione
+                # esatta — bger.li permette accesso diretto via codice.
+                bger_url = costruisci_url_bger(codice)
+                full_text = await _fetch_bger_text(bger_url, http)
+                if full_text:
+                    hit = {"docket_number": codice, "court_name": "BGer", "decision_date": ""}
+                    source = "bger.li"
+                    log.info("bger.li fallback for '%s': %s", codice, bger_url)
+                else:
+                    return JSONResponse(
+                        {"errore": f"Sentenza '{codice}' non trovata. Verifica il codice e riprova."},
+                        status_code=404,
+                    )
 
     if len(full_text) < 100:
         return JSONResponse({"errore": "Testo non disponibile."}, status_code=404)
@@ -1605,7 +1424,6 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
         "source":        source,
         "statutes":      hit.get("statutes") or [],
         "decision_id":   hit.get("decision_id", decision_id),
-        "url":           hit.get("url", ""),
     })
 
 @app.get("/sintesi_federal")
@@ -1666,8 +1484,6 @@ async def articolo_ocl(
         "art":                art,
         "sr_number":          d.get("sr_number", ""),
         "consolidation_date": d.get("consolidation_date", ""),
-        "titolo_legge":       d.get("title", ""),
-        "abbreviazione":      d.get("abbreviation", ""),
         "lang":               lang,
     })
 
@@ -1751,49 +1567,6 @@ async def html_federale(
         return JSONResponse({"errore": "Contenuto non trovato."}, status_code=400)
 
     return JSONResponse({"html": html_out, "url": url})
-
-
-# ── /feedback ─────────────────────────────────────────────────────────────────
-
-class FeedbackPayload(BaseModel):
-    message: str
-    email: Optional[str] = None
-    query: Optional[str] = None
-    result_code: Optional[str] = None
-
-@app.post("/feedback")
-async def feedback(payload: FeedbackPayload):
-    smtp_pass = os.environ.get("SMTP_PASS", "")
-    if not smtp_pass:
-        log.warning("SMTP_PASS non impostato — feedback non inviato: %s", payload.message)
-        return JSONResponse({"ok": True, "note": "logged only"})
-
-    body_lines = [
-        f"Messaggio: {payload.message}",
-        f"Email utente: {payload.email or '—'}",
-        f"Query: {payload.query or '—'}",
-        f"Sentenza: {payload.result_code or '—'}",
-    ]
-    body = "\n".join(body_lines)
-
-    msg = MIMEMultipart()
-    msg["From"]    = "sententiaki@gmail.com"
-    msg["To"]      = "sententiaki@gmail.com"
-    msg["Subject"] = f"[Sententia feedback] {(payload.query or payload.result_code or 'senza query')[:60]}"
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP("smtp.gmail.com", 587, timeout=10) as s:
-            s.ehlo()
-            s.starttls()
-            s.login("sententiaki@gmail.com", smtp_pass)
-            s.sendmail("sententiaki@gmail.com", "sententiaki@gmail.com", msg.as_string())
-        log.info("Feedback inviato via email")
-    except Exception as exc:
-        log.error("Errore invio feedback email: %s", exc)
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
-
-    return JSONResponse({"ok": True})
 
 
 # ── /health ───────────────────────────────────────────────────────────────────
