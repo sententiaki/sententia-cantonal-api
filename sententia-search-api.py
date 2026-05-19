@@ -484,7 +484,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
     # 2. L'AI ottimizza i concetti (NON tocca i codici legge)
     try:
         resp = await ai.chat.completions.create(
-            model="gpt-4o-mini", max_tokens=150, temperature=0,
+            model="gpt-4o-mini", max_tokens=250, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
                 {"role": "user",   "content": f'Query: "{query_norm}"'},
@@ -495,6 +495,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
         if m:
             d = json.loads(m.group())
             raw_opt = d.get("query_ottimizzata", query_norm).strip().strip('"\'')
+            raw_opt = _ES_ART_RE.sub("", raw_opt).strip().rstrip("|").strip()
 
             # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
             # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico

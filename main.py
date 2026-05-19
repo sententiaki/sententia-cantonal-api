@@ -621,7 +621,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
 
     try:
         resp = await ai.chat.completions.create(
-            model="gpt-4o-mini", max_tokens=150, temperature=0,
+            model="gpt-4o-mini", max_tokens=250, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
                 {"role": "user",   "content": f'Query: "{concetto}"'},
@@ -632,6 +632,9 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
         if m:
             d = json.loads(m.group())
             raw_opt = d.get("query_ottimizzata", concetto).strip().strip('"\'')
+            # Rimuovi eventuali articoli che l'AI ha riscritto nel corpo della query:
+            # gli articoli corretti sono già in art_block (estratti dalla query originale).
+            raw_opt = _ES_ART_RE.sub("", raw_opt).strip().rstrip("|").strip()
             final_opt = pre_processa_query(raw_opt) + art_block
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
