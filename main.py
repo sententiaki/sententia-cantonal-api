@@ -167,7 +167,19 @@ LAW_ALIASES: dict[str, str] = {
     "IVG": "LAI", "SCHKG": "LEF", "DBG": "LIFD", "MWSTG": "LIVA",
     "UWG": "LCD", "KG": "LCart", "MSCHG": "LPM", "FUSG": "LFus",
     "IPRG": "LDIP", "VWVG": "PA",
+    # Costituzione federale
+    "COST": "Cost.", "CST": "Cst.",
 }
+
+# Parole che NON sono sigle di legge ma possono essere catturate da ARTICLE_RE
+_INVALID_CODES: frozenset[str] = frozenset({
+    # Indicatori di comma/paragrafo spesso seguiti da un numero
+    "ABS", "CPV", "AL", "LETT", "LIT", "ZIFF", "NR", "CH",
+    # Riferimenti ad allegati/annessi
+    "ALLEGATO", "ALLEGATI", "ANNEX", "ANNEXE", "ANHANG",
+    # Plurali latini o abbreviazioni di pagina/seguente usate nei testi
+    "SEGG", "SS", "FF", "COMMA", "COMMI", "UNTER",
+})
 
 # Regex per l'estrazione degli articoli dal testo
 # Pattern principale: "Art. 53 CP" / "art 336 CO" / "Art. 8a CC"
@@ -205,7 +217,11 @@ def estrai_articoli(testo: str, max_art: int = 6) -> list[str]:
     testo = _espandi_art_congiunti(testo)
     seen, result = set(), []
     for num, code in ARTICLE_RE.findall(testo):
-        code_norm = LAW_ALIASES.get(code.upper().rstrip('.'), code)
+        code_key = code.upper().rstrip('.')
+        # Scarta falsi positivi (Abs, Allegato, ecc.)
+        if code_key in _INVALID_CODES:
+            continue
+        code_norm = LAW_ALIASES.get(code_key, code)
         label = f"Art. {num} {code_norm}"
         if label not in seen:
             seen.add(label)

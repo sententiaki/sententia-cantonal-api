@@ -140,6 +140,8 @@ LAW_ALIASES: dict[str, str] = {
     "IVG": "LAI", "SCHKG": "LEF", "DBG": "LIFD", "MWSTG": "LIVA",
     "UWG": "LCD", "KG": "LCart", "MSCHG": "LPM", "FUSG": "LFus",
     "IPRG": "LDIP", "VWVG": "PA",
+    # Costituzione federale
+    "COST": "Cost.", "CST": "Cst.",
 }
 
 # Regex per l'estrazione degli articoli dal testo
