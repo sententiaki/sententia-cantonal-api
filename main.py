@@ -1301,36 +1301,42 @@ async def cerca_stream(
                     query_opt, spiegazione = query, ""
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
-                # Porta sempre 80 da ES — con i filtri court/type i candidati si riducono molto
-                # (es. query in italiano: i federali sono spesso oltre i primi 32), e il
-                # re-rank AI ha bisogno di un pool ampio. Una sola request HTTP, costo invariato.
-                needs_extra = bool(tipo_filter or area_filter or tribunal_filter or canton_filter)
                 fetch_limit = 80
                 # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # entscheidsuche primario: fetch sempre da from=0 con size più grande,
-                # poi slice [offset:offset+limit] dopo rerank per paginazione stabile
-                es_hits = await _entscheidsuche_search(query_opt, min(fetch_limit + offset, 80), http, offset=0)
-                # Federal IDs start with CH_; filter based on requested court mode
+                # Splitta query_opt nei segmenti linguistici (IT | DE | FR).
+                # L'optimizer produce sempre IT come primo segmento.
+                # Usare il segmento linguistico corretto per tipo_filter evita che il rank
+                # dipenda dalla lingua: termini DE boostano federali, termini IT i cantonali.
+                _q_parts = [p.strip() for p in query_opt.split("|") if p.strip()]
+                _q_it    = _q_parts[0] if _q_parts else query_opt          # solo IT
+                _q_de_fr = " | ".join(_q_parts[1:]) if len(_q_parts) > 1 else query_opt  # DE+FR
+
+                # entscheidsuche: usa la variante linguistica adatta al filtro court.
+                # - all      → query multilingue completa
+                # - federal  → segmento DE/FR (BGer/BVGer scrivono in DE/FR)
+                # - cantonal → segmento IT (sentenze TI/GR/BE in italiano)
+                # In tutti i casi fetch=80 per avere un pool ampio per il re-rank AI.
+                if tipo_filter == "federal":
+                    _es_query = _q_de_fr
+                elif tipo_filter == "cantonal":
+                    _es_query = _q_it
+                else:
+                    _es_query = query_opt  # all courts: usa tutto
+
+                es_hits = await _entscheidsuche_search(_es_query, 80, http, offset=0)
+
+                # Applica filtro CH_
                 if tipo_filter == "cantonal":
                     hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
                 elif tipo_filter == "all":
-                    hits = list(es_hits)  # federal + cantonal, no filter
+                    hits = list(es_hits)
                 else:
-                    # federal (default, None, or "federal")
                     hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
-                    if not hits:
-                        # Italian queries rank cantonal docs highest → 0 CH_ in first pass.
-                        # Retry with DE/FR segment of query_opt: federal decisions are mostly DE/FR.
-                        parts = [p.strip() for p in query_opt.split("|")]
-                        de_fr_query = " | ".join(parts[1:]) if len(parts) > 1 else query_opt
-                        if de_fr_query and de_fr_query != query_opt:
-                            log.info("Federal: 0 CH_ results, retrying with DE/FR query: %s", de_fr_query)
-                            es_retry = await _entscheidsuche_search(de_fr_query, 80, http, offset=0)
-                            hits = [h for h in es_retry if (h.get("_es_id") or "").startswith("CH_")]
+
                 if not hits:
-                    log.info("ES returned 0, OCL fallback disabled (down) — skipping")
+                    log.info("ES returned 0 for tipo=%s, query=%s", tipo_filter, _es_query)
 
                 # Filtro anno
                 if anno_da or anno_a:
