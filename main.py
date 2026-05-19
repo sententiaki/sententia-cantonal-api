@@ -998,7 +998,7 @@ _ES_ART_RE = re.compile(
     re.UNICODE,
 )
 
-def _score_filter(hits: list[dict], ratio: float = 0.15) -> list[dict]:
+def _score_filter(hits: list[dict], ratio: float = 0.05) -> list[dict]:
     """Scarta risultati il cui score è < ratio * score_massimo. Non ritorna mai lista vuota."""
     if not hits:
         return hits
@@ -1058,14 +1058,7 @@ async def _entscheidsuche_search(
         soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
         return await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
 
-    # Nessun articolo: minimum_should_match per precisione (80% dei termini se ≥3)
-    hits = await _post({**base, "query": {"simple_query_string": {
-        "query": query, "default_operator": "or", "minimum_should_match": "3<80%"
-    }}})
-    if hits:
-        return hits
-    # Fallback: OR puro se 0 risultati
-    log.info("No results with minimum_should_match, falling back to OR: %s", query[:80])
+    # Nessun articolo: OR per massimizzare i candidati — il re-rank AI seleziona i rilevanti
     return await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
 
 
