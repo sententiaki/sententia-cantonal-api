@@ -1079,36 +1079,22 @@ async def cerca_stream(
                 yield sse({"type": "status", "message": f"Ricerca: {query_opt}"})
 
                 fetch_limit = 80
-                # Per ricerche cantonali passa la lingua al filtro OCL (es. TI→it, ZH→de)
                 ocl_lang = _CANTON_LANG.get(canton_filter, "") if canton_filter else ""
 
-                # Splitta query_opt nei segmenti linguistici (IT | DE | FR).
-                # L'optimizer produce sempre IT come primo segmento.
-                _q_parts = [p.strip() for p in query_opt.split("|") if p.strip()]
-                _q_it    = _q_parts[0] if _q_parts else query_opt
-                _q_de_fr = " | ".join(_q_parts[1:]) if len(_q_parts) > 1 else query_opt
+                # Usa sempre la query trilingue completa per ES — il rank non deve dipendere
+                # dalla lingua. Il filtro CH_ è applicato dopo sul pool di 80 risultati.
+                es_hits = await _entscheidsuche_search(query_opt, 80, http)
+                log.info("ES returned %d hits for query: %s", len(es_hits), query_opt[:80])
 
-                # Usa il segmento linguistico adatto al filtro court per evitare
-                # che il rank dipenda dalla lingua della query dell'utente.
-                if tipo_filter == "federal":
-                    _es_query = _q_de_fr
-                elif tipo_filter == "cantonal":
-                    _es_query = _q_it
-                else:
-                    _es_query = query_opt  # all courts: usa tutto
-
-                es_hits = await _entscheidsuche_search(_es_query, 80, http)
-
-                # Applica filtro CH_
+                # Filtro CH_: unico filtro court
                 if tipo_filter == "cantonal":
                     hits = [h for h in es_hits if not (h.get("_es_id") or "").startswith("CH_")]
                 elif tipo_filter == "all":
                     hits = list(es_hits)
-                else:
+                else:  # federal o None
                     hits = [h for h in es_hits if (h.get("_es_id") or "").startswith("CH_")]
 
-                if not hits:
-                    log.info("ES returned 0 for tipo=%s, query=%s", tipo_filter, _es_query)
+                log.info("After court filter tipo=%s: %d hits remain", tipo_filter, len(hits))
 
                 # Filtro anno
                 if anno_da or anno_a:
@@ -1127,10 +1113,6 @@ async def cerca_stream(
                 # Helper comune per court_name
                 def _court(h: dict) -> str:
                     return h.get("court_name") or h.get("court") or ""
-
-                # Filtro tipo (federal / cantonal)
-                if tipo_filter in ("federal", "cantonal"):
-                    hits = [h for h in hits if _rileva_tipo(_court(h)) == tipo_filter]
 
                 # Filtro tribunale specifico (bger / bvger / bstger)
                 if tribunal_filter:
