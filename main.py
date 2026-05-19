@@ -631,7 +631,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", concetto)
+            raw_opt = d.get("query_ottimizzata", concetto).strip().strip('"\'')
             final_opt = pre_processa_query(raw_opt) + art_block
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:

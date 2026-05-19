@@ -494,7 +494,8 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", query_norm)
+            raw_opt = d.get("query_ottimizzata", query_norm).strip().strip('"\'')
+
             # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
             # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico
             final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
