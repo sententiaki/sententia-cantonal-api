@@ -48,7 +48,7 @@ app.add_middleware(
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 OPENCASELAW_BASE    = "https://mcp.opencaselaw.ch/api"
-ENTSCHEIDSUCHE_BASE = "https://entscheidsuche.ch/_search.php"
+ENTSCHEIDSUCHE_BASE = "https://sententia.ch/es-proxy.php"
 
 HTTP_HEADERS = {
     "User-Agent": (
@@ -1303,12 +1303,17 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     # Formati validi: 6B_302/2023 | F-2684/2026 | 143 II 268 | BGE_134_III_67
     _DOCKET_RE = re.compile(
         r"""
-        (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?   # prefisso opzionale
+        (?:(?:bge|atf|bger|bvger|bstger|bpatger|rdaf|rkge)[\s_]+)?
         (?:
-            [1-9][A-Z]{0,3}_\d+/\d{4}           # 6B_302/2023
-          | [A-Z]{1,3}[-_]\d+[/_-]\d{2,4}        # F-2684/2026 / SK.2023.1
-          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+       # 143 II 268 / 134_III_67
-          | \d{1,4}\.\d{4}\.\d+                  # 52.2015.575 / 42.2025.11 (cantonal)
+            [1-9][A-Z]{0,3}[_/]\d+[/_]\d{4}           # 6B_302/2023
+          | [A-Z]{1,3}[-]\d{3,6}[-/]\d{2,4}            # F-2684/2026  A-1819-2020
+          | [A-Z]{2,4}\.20\d{2}\.\d+                   # SK.2020.62  BB.2023.45
+          | [A-Z]{2,4}-20\d{2}-\d+                     # SK-2020-62
+          | \d{2,4}[\s_][IVX]{1,5}[\s_]\d+             # 143 II 268
+          | \d{1,4}\.\d{4}\.\d+                        # 42.2025.11 (cantonal)
+          | [A-Z]{2,6}/20\d{2}/\d+                     # ATA/2020/123
+          | [A-Z]{2,6}\d{4,6}                          # SB200001 (ZH)
+          | [A-Z]{1,2}20\d{2}[/_-]\d+                  # O2017_001 (BPatGer)
         )
         """,
         re.IGNORECASE | re.VERBOSE,

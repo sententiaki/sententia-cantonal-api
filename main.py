@@ -52,7 +52,7 @@ app.add_middleware(
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 OPENCASELAW_BASE    = "https://mcp.opencaselaw.ch/api"
-ENTSCHEIDSUCHE_BASE = "https://entscheidsuche.ch/_search.php"
+ENTSCHEIDSUCHE_BASE = "https://sententia.ch/es-proxy.php"
 
 HTTP_HEADERS = {
     "User-Agent": (
