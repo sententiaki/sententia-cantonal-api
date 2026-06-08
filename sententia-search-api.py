@@ -409,6 +409,13 @@ _ART_CODE_RE = re.compile(
     re.UNICODE,
 )
 
+# Trova qualsiasi "Art. NNN CODE" nella query (per estrarre/rimuovere il blocco articoli)
+# Gestisce: Art. / art. / ART. / Art / art (maiuscolo, minuscolo, con o senza punto)
+_ES_ART_RE = re.compile(
+    r'[Aa][Rr][Tt]\.?\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
+    re.UNICODE,
+)
+
 # Riconosce una query che è SOLO un riferimento articolo (nessun concetto aggiuntivo)
 _PURE_ART_RE = re.compile(
     r'^Art\.\s+\d+[a-z]?(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
@@ -482,35 +489,47 @@ Rispondi SOLO con JSON: {"query_ottimizzata": "...", "spiegazione": "..."}"""
 async def ottimizza_query(query: str, ai: AsyncOpenAI) -> tuple[str, str]:
     # 1. Normalizza: nomi di legge estesi → sigle, varianti articolo → "Art. NNN CODE"
     query_norm = pre_processa_query(query)
+    query_pre  = espandi_codici_articolo(query_norm)
 
-    # 2. L'AI ottimizza i concetti (NON tocca i codici legge)
+    # 2. Separa la parte concettuale dagli articoli.
+    #    L'AI vede SOLO i concetti — gli articoli vengono riattaccati dopo.
+    #    Questo impedisce all'AI di toccare/duplicare i riferimenti ad articoli.
+    art_refs_expanded = _ES_ART_RE.findall(query_pre)
+    concetto = _ES_ART_RE.sub("", query_norm).strip()
+
+    if not concetto:
+        # Solo articoli — niente da tradurre
+        return query_pre, "Espansione articolo"
+
+    art_block = " " + " ".join(art_refs_expanded) if art_refs_expanded else ""
+
+    # 3. L'AI ottimizza solo i concetti (NON tocca i codici legge)
     try:
         resp = await ai.chat.completions.create(
             model="gpt-4o-mini", max_tokens=250, temperature=0,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
-                {"role": "user",   "content": f'Query: "{query_norm}"'},
+                {"role": "user",   "content": f'Query: "{concetto}"'},
             ],
         )
         raw = resp.choices[0].message.content.strip()
         m = re.search(r'\{.*\}', raw, re.DOTALL)
         if m:
             d = json.loads(m.group())
-            raw_opt = d.get("query_ottimizzata", query_norm).strip().strip('"\'')
+            raw_opt = d.get("query_ottimizzata", concetto).strip().strip('"\'')
             raw_opt = _ES_ART_RE.sub("", raw_opt)
             raw_opt = re.sub(r'\b\d+[a-z]{0,8}\s+[A-Z][A-Za-z]{0,7}\.?\b', "", raw_opt)
             raw_opt = re.sub(r'\s*\.\s*(?=\||$)', " ", raw_opt)
             raw_opt = raw_opt.strip().rstrip("|").strip()
 
-            # Normalizza output AI, poi espande i codici svizzeri nelle 3 lingue
-            # (CO→OR, CP→StGB, Cost.→Cst. BV, ecc.) in modo deterministico
-            final_opt = espandi_codici_articolo(pre_processa_query(raw_opt))
+            # Riattacca gli articoli originali alla fine della query ottimizzata
+            final_opt = pre_processa_query(raw_opt) + art_block
             return final_opt, d.get("spiegazione", "")
     except Exception as exc:
         log.warning("Optimizer error: %s", exc)
 
     # Fallback se AI non disponibile
-    return espandi_codici_articolo(query_norm), "Query diretta"
+    return query_pre, "Query diretta"
 
 
 # ── Summary generator (GPT-4o-mini) ──────────────────────────────────────────
@@ -857,20 +876,58 @@ def _es_normalize(hit: dict) -> dict:
     }
 
 
+def _prepara_query_es(query: str) -> tuple[str, str]:
+    """Separa la query in (phrase_block, non_art).
+
+    phrase_block: articoli come phrase queries slop-2 ("Art. 41 CO"~2 | "Art. 41 OR"~2)
+    non_art:      resto delle parole (linguaggio naturale)
+    """
+    art_refs     = _ES_ART_RE.findall(query)
+    parts        = _ES_ART_RE.split(query)
+    non_art      = " ".join(p.strip() for p in parts if p.strip() and not _ES_ART_RE.fullmatch(p.strip()))
+    phrase_block = " | ".join(f'"{ref.strip()}"~2' for ref in art_refs)
+    return phrase_block, non_art
+
+
 async def _entscheidsuche_search(
     query: str, limit: int, http: httpx.AsyncClient
 ) -> list[dict]:
-    """Ricerca secondaria su entscheidsuche.ch (Elasticsearch full-text)."""
-    payload = {
-        "query": {
-            "simple_query_string": {
-                "query": query,
-                "default_operator": "or",
-            }
-        },
-        "size": limit,
-        "sort": [{"_score": {"order": "desc"}}],
-    }
+    """Ricerca su entscheidsuche.ch.
+
+    Se la query contiene articoli di legge:
+      - fase 1 (strict): bool must=articolo + should=keywords → tutti i risultati contengono l'articolo
+      - fase 2 (fallback): solo se fase 1 → 0 risultati, query soft senza filtro articolo
+    Se la query non contiene articoli: simple_query_string ordinario.
+    """
+    phrase_block, non_art = _prepara_query_es(query)
+
+    async def _post(payload: dict) -> list[dict]:
+        try:
+            r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
+            r.raise_for_status()
+            return [_es_normalize(h) for h in r.json().get("hits", {}).get("hits", [])]
+        except Exception as exc:
+            log.warning("Entscheidsuche search error: %s", repr(exc))
+            return []
+
+    base = {"size": limit, "sort": [{"_score": {"order": "desc"}}]}
+
+    if phrase_block:
+        # Articolo obbligatorio (must), keywords aumentano score (should)
+        bool_q: dict = {"must": [{"simple_query_string": {"query": phrase_block, "default_operator": "or"}}]}
+        if non_art:
+            bool_q["should"] = [{"simple_query_string": {"query": non_art, "default_operator": "or"}}]
+        hits = await _post({**base, "query": {"bool": bool_q}})
+        if hits:
+            log.info("ES query articolo (must) + concetto (should): %d risultati", len(hits))
+            return hits
+        # Fallback: nessun risultato con l'articolo, ricerca soft
+        log.info("No results with article filter, falling back to soft query")
+        soft = f"{non_art} {phrase_block}".strip() if non_art else phrase_block
+        return await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
+
+    # Nessun articolo: OR per massimizzare i candidati
+    return await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
     try:
         r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
         r.raise_for_status()
