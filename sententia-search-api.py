@@ -1187,7 +1187,10 @@ async def cerca_stream(
             async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as http:
 
                 yield sse({"type": "status", "message": "Ottimizzazione query..."})
-                if ai:
+                if _IS_DOCKET_RE.match(query.strip()):
+                    # Codice sentenza preciso: salta l'ottimizzatore, cerca direttamente
+                    query_opt, spiegazione = query.strip(), ""
+                elif ai:
                     query_opt, spiegazione = await ottimizza_query(query, ai)
                 else:
                     query_opt, spiegazione = query, ""
