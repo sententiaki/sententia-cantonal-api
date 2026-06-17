@@ -889,6 +889,58 @@ def _prepara_query_es(query: str) -> tuple[str, str]:
     return phrase_block, non_art
 
 
+_IS_DOCKET_RE = re.compile(
+    r"""^(?:(?:bge|atf|dtf|bger|bvger|bstger|bpatger)[\s_]+)?
+    (?:
+        [1-9][A-Z]{0,3}[_/]\d+[/_]\d{4}       # 6B_302/2023
+      | [A-Z]{1,3}-\d{3,6}[-/]\d{2,4}          # F-2684/2026  A-1819/2020
+      | [A-Z]{2,4}\.20\d{2}\.\d+               # SK.2020.62
+      | [A-Z]{2,4}-20\d{2}-\d+                 # SK-2020-62
+      | (?:bge|atf|dtf)\s+\d+\s+[IVX]+\s+\d+  # BGE/ATF/DTF 143 II 268
+      | \d{2,4}\s+[IVX]{1,5}\s+\d+             # 143 II 268 (senza prefisso)
+      | \d{1,4}\.\d{4}\.\d+                    # 42.2025.11 (cantonal)
+      | [A-Z]{2,6}/20\d{2}/\d+                 # ATA/2020/123
+      | [A-Z]{2,6}\d{4,6}                       # SB200001 (ZH)
+      | [A-Z]{1,2}20\d{2}[/_-]\d+              # O2017_001 (BPatGer)
+    )$""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _docket_direct_query(query: str) -> dict | None:
+    """Se la query è SOLO un codice sentenza, restituisce la query ES per trovarlo direttamente."""
+    q = query.strip()
+    if not _IS_DOCKET_RE.match(q):
+        return None
+    # BGE/ATF/DTF 143 II 268
+    m = re.match(r'^(?:bge|atf|dtf)\s+(\d+)\s+([IVX]+)\s+(\d+)$', q, re.I)
+    if m:
+        return {"wildcard": {"_id": f"CH_BGE_*_BGE-{m.group(1)}-{m.group(2)}-{m.group(3)}_*"}}
+    # 143 II 268 senza prefisso
+    m = re.match(r'^(\d+)\s+([IVX]+)\s+(\d+)$', q)
+    if m:
+        return {"wildcard": {"_id": f"CH_BGE_*_BGE-{m.group(1)}-{m.group(2)}-{m.group(3)}_*"}}
+    # 6B_302/2023
+    m = re.match(r'^([1-9][A-Z]{0,3})[_/](\d+)[/_](\d{4})$', q, re.I)
+    if m:
+        return {"wildcard": {"_id": f"CH_BGER_*_{m.group(1)}-{m.group(2)}-{m.group(3)}_*"}}
+    # F-2684/2026
+    m = re.match(r'^([A-Z]{1,3})-(\d{3,6})[/-](\d{4})$', q, re.I)
+    if m:
+        return {"wildcard": {"_id": f"CH_BVGER_*_{m.group(1)}-{m.group(2)}-{m.group(3)}_*"}}
+    # SK.2020.62
+    m = re.match(r'^([A-Z]{2,4})\.(20\d{2})\.(\d+)$', q, re.I)
+    if m:
+        return {"wildcard": {"_id": f"CH_BSTGER_*_{m.group(1)}.{m.group(2)}.{m.group(3)}_*"}}
+    # SK-2020-62
+    m = re.match(r'^([A-Z]{2,4})-(20\d{2})-(\d+)$', q, re.I)
+    if m:
+        return {"wildcard": {"_id": f"CH_BSTGER_*_{m.group(1)}.{m.group(2)}.{m.group(3)}_*"}}
+    # Formati non mappabili: phrase query sull'intera stringa
+    return {"simple_query_string": {"query": f'"{q}"', "default_operator": "and"}}
+
+
+
 async def _entscheidsuche_search(
     query: str, limit: int, http: httpx.AsyncClient
 ) -> list[dict]:
@@ -927,7 +979,16 @@ async def _entscheidsuche_search(
         return await _post({**base, "query": {"simple_query_string": {"query": soft, "default_operator": "or"}}})
 
     # Nessun articolo: OR per massimizzare i candidati
-    return await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
+    hits = await _post({**base, "query": {"simple_query_string": {"query": query, "default_operator": "or"}}})
+
+    # Se la query è SOLO un codice sentenza, porta il match diretto in cima
+    direct_q = _docket_direct_query(query)
+    if direct_q:
+        direct = await _post({"size": 1, "query": direct_q})
+        if direct:
+            direct_id = direct[0].get("_es_id", "")
+            hits = direct + [h for h in hits if h.get("_es_id") != direct_id]
+    return hits
     try:
         r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
         r.raise_for_status()
