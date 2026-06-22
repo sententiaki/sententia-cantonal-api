@@ -1585,7 +1585,7 @@ async def articolo_ocl(
     senza bisogno di una mappa RS statica.
     """
     lang = lang if lang in ("it", "de", "fr") else "it"
-    async with httpx.AsyncClient(timeout=12.0) as client:
+    async with httpx.AsyncClient(timeout=6.0) as client:
         try:
             r = await client.get(
                 f"{OPENCASELAW_BASE}/laws/{sigla}",
