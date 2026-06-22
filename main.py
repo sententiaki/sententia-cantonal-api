@@ -1019,7 +1019,10 @@ def _es_normalize(hit: dict) -> dict:
 
 
 _ES_ART_RE = re.compile(
-    r'Art\.\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
+    r'Art\.\s+\d+[a-z]{0,8}'
+    r'(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
+    r'(?:\s+(?:lett\.|let\.|litt\.|lit\.)\s*[a-z]+)?'
+    r'\s+[A-Z][A-Za-z]{0,7}\.?\b',
     re.UNICODE,
 )
 

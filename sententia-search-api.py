@@ -412,7 +412,10 @@ _ART_CODE_RE = re.compile(
 # Trova qualsiasi "Art. NNN CODE" nella query (per estrarre/rimuovere il blocco articoli)
 # Gestisce: Art. / art. / ART. / Art / art (maiuscolo, minuscolo, con o senza punto)
 _ES_ART_RE = re.compile(
-    r'[Aa][Rr][Tt]\.?\s+\d+[a-z]{0,8}(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?\s+[A-Z][A-Za-z]{0,7}\.?\b',
+    r'[Aa][Rr][Tt]\.?\s+\d+[a-z]{0,8}'
+    r'(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
+    r'(?:\s+(?:lett\.|let\.|litt\.|lit\.)\s*[a-z]+)?'
+    r'\s+[A-Z][A-Za-z]{0,7}\.?\b',
     re.UNICODE,
 )
 
@@ -912,6 +915,23 @@ def _norm_docket(d: str) -> str:
     return re.sub(r'\s+', ' ', d.strip()).lower()
 
 
+def _docket_to_es_wildcard(query: str) -> str:
+    """Converte un codice sentenza nel pattern wildcard per l'_id di ES.
+
+    ES memorizza i documenti con _id come 'CH_BGE_005_BGE-133-II-416_2008':
+    il frammento docket usa trattini come separatori.
+    'BGE 133 II 416' → '*BGE-133-II-416*'
+    '6B_302/2023'    → '*6B-302-2023*'
+    'SK.2020.62'     → '*SK.2020.62*'
+    """
+    q = query.strip()
+    # Rimuovi solo il prefisso tribunale generico (non BGE/ATF/DTF che fanno parte del docket)
+    bare = re.sub(r'^(?:bger|bvger|bstger|bpatger)[\s_]+', '', q, flags=re.IGNORECASE).strip()
+    # Rimpiazza spazi e slash/underscore con trattini (formato ES _id)
+    fragment = re.sub(r'[\s/_]', '-', bare)
+    return f"*{fragment}*"
+
+
 
 async def _entscheidsuche_search(
     query: str, limit: int, http: httpx.AsyncClient
@@ -955,29 +975,26 @@ async def _entscheidsuche_search(
 
     # Se la query è SOLO un codice sentenza, porta il match esatto in cima
     if _IS_DOCKET_RE.match(query.strip()):
-        q_norm = _norm_docket(query)
-        # 1. Cerca nei risultati già ottenuti
-        exact_idx = next(
-            (i for i, h in enumerate(hits)
-             if _norm_docket(h.get("docket_number", "")) == q_norm),
-            None,
-        )
-        if exact_idx is not None and exact_idx != 0:
-            hits.insert(0, hits.pop(exact_idx))
-        elif exact_idx is None:
-            # 2. Non trovato: ricerca mirata come fa Summarize
-            targeted = await _post({
-                "size": 5,
-                "query": {"simple_query_string": {"query": query, "default_operator": "and"}},
-            })
-            exact = next(
-                (h for h in targeted
+        # Ricerca diretta per _id ES: più affidabile di full-text perché
+        # i documenti che citano la sentenza possono scalzarla nel ranking.
+        wildcard = _docket_to_es_wildcard(query)
+        exact_hits = await _post({
+            "size": 1,
+            "query": {"wildcard": {"_id": {"value": wildcard}}},
+        })
+        if exact_hits:
+            exact_id = exact_hits[0].get("_es_id", "")
+            hits = exact_hits + [h for h in hits if h.get("_es_id") != exact_id]
+        else:
+            # Fallback: confronto docket_number normalizzato tra i risultati OR già ottenuti
+            q_norm = _norm_docket(query)
+            exact_idx = next(
+                (i for i, h in enumerate(hits)
                  if _norm_docket(h.get("docket_number", "")) == q_norm),
                 None,
             )
-            if exact:
-                exact_id = exact.get("_es_id", "")
-                hits = [exact] + [h for h in hits if h.get("_es_id") != exact_id]
+            if exact_idx is not None and exact_idx != 0:
+                hits.insert(0, hits.pop(exact_idx))
     return hits
     try:
         r = await http.post(ENTSCHEIDSUCHE_BASE, json=payload, timeout=8.0)
