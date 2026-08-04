@@ -270,7 +270,7 @@ _QUERY_CODE_BEFORE_ART_RE = re.compile(
 _CODE_CANON: dict[str, str] = {
     "cp": "CP", "cc": "CC", "co": "CO", "cpc": "CPC", "cpp": "CPP",
     "ltf": "LTF", "bgg": "BGG", "bv": "BV", "bg": "BG",
-    "cost.": "Cost.", "cst.": "Cst.",
+    "cost.": "Cost.", "cst.": "Cst.", "cost": "Cost.", "cst": "Cst.", "const.": "Cst.", "const": "Cst.",
     "stgb": "StGB", "zgb": "ZGB", "or": "OR", "zpo": "ZPO",
     "stpo": "StPO", "lpd": "LPD", "dsg": "DSG",
     "lef": "LEF", "lp": "LP", "schkg": "SchKG",
@@ -286,18 +286,20 @@ _ABS_FULL_RE = re.compile(
 _CPV_NODOT_RE = re.compile(r'\bcpv\s+(\d+)',   re.I)
 _ABS_NODOT_RE = re.compile(r'\bAbs\s+(\d+)')
 _AL_NODOT_RE  = re.compile(r'\bal\s+(\d+)',    re.I)
+# Normalizza "abs. N" (minuscolo con punto) → "Abs. N"
+_ABS_DOT_RE   = re.compile(r'\babs\.\s*(\d+)', re.IGNORECASE)
 
 # "N CODE" senza prefisso Art. — cattura anche "N cpv/Abs/al N CODE"
 _BARE_NUM_CODE_RE = re.compile(
     r'(?<!\w)'
     r'(\d+[a-z]?)'
     r'(\s+(?:cpv\.?|Abs\.?|al\.?)\s*\d+)?'
-    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
+    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Const\.?|Cost\.?|Cst\.?|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)(?!\w)',
     re.UNICODE | re.IGNORECASE,
 )
 # "CODE N" senza prefisso Art.  (es. "OR 50", "StGB 111", "or 50")
 _CODE_BARE_NUM_RE = re.compile(
-    r'\b(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]?)\b',
+    r'(?<!\w)(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Const\.?|Cost\.?|Cst\.?|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\s+(\d+[a-z]?)(?!\w)',
     re.UNICODE | re.IGNORECASE,
 )
 
@@ -322,6 +324,7 @@ def pre_processa_query(query: str) -> str:
     result = _ABS_FULL_RE.sub(lambda m: f"Abs. {m.group(2)}", result)
     result = _CPV_NODOT_RE.sub(lambda m: f"cpv. {m.group(1)}", result)
     result = _ABS_NODOT_RE.sub(lambda m: f"Abs. {m.group(1)}", result)
+    result = _ABS_DOT_RE.sub(  lambda m: f"Abs. {m.group(1)}", result)
     result = _AL_NODOT_RE.sub( lambda m: f"al. {m.group(1)}",  result)
     # 3. "articolo/article/artikel N" → "Art. N"  (con prefisso esplicito)
     result = _QUERY_ART_RE.sub(lambda m: f"Art. {m.group(2)}", result)
@@ -329,7 +332,7 @@ def pre_processa_query(query: str) -> str:
     def _canon(m: re.Match) -> str:
         return _CODE_CANON.get(m.group(1).lower(), m.group(1).upper())
     result = re.sub(
-        r'\b(cp|cc|co|cpc|cpp|ltf|bgg|bv|stgb|zgb|or|zpo|stpo|lpd|dsg|lef|lp|schkg|dbg|lifd|cost\.|cst\.)\b',
+        r'(?<!\w)(cp|cc|co|cpc|cpp|ltf|bgg|bv|stgb|zgb|or|zpo|stpo|lpd|dsg|lef|lp|schkg|dbg|lifd|const\.?|cost\.?|cst\.?)(?!\w)',
         _canon, result, flags=re.IGNORECASE,
     )
     # 5. "CODE N" (senza Art.) → "Art. N CODE"   (es. "OR 50" → "Art. 50 OR")
@@ -405,7 +408,7 @@ _CODE_EQUIVALENTS: dict[str, list[str]] = {
 _ART_CODE_RE = re.compile(
     r'(Art\.\s+\d+[a-z]?)'
     r'(\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
-    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)\b',
+    r'\s+(CP|CC|CO|CPC|CPP|LTF|BGG|BV|Cost\.|Cst\.|StGB|ZGB|OR|ZPO|StPO|LPD|DSG|LEF|LP|SchKG|DBG|LIFD)(?!\w)',
     re.UNICODE,
 )
 
@@ -413,9 +416,9 @@ _ART_CODE_RE = re.compile(
 # Gestisce: Art. / art. / ART. / Art / art (maiuscolo, minuscolo, con o senza punto)
 _ES_ART_RE = re.compile(
     r'[Aa][Rr][Tt]\.?\s+\d+[a-z]{0,8}'
-    r'(?:\s+(?:cpv\.|Abs\.|al\.)\s*\d+)?'
+    r'(?:\s+(?:[Cc]pv\.|[Aa]bs\.|[Aa]l\.)\s*\d+)?'
     r'(?:\s+(?:lett\.|let\.|litt\.|lit\.)\s*[a-z]+)?'
-    r'\s+[A-Z][A-Za-z]{0,7}\.?\b',
+    r'\s+[A-Z][A-Za-z]{0,7}\.?(?!\w)',
     re.UNICODE,
 )
 
