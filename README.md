@@ -19,7 +19,11 @@ sententia-cantonal-deploy/
 
 ## Come funziona
 
-La ricerca principale (`/cerca_stream`) esegue queste operazioni in pipeline:
+### Frontend search (`sententia-search.html`)
+
+Il frontend di ricerca interroga `/cerca_stream` e riceve i risultati via SSE man mano che arrivano.
+
+La pipeline backend esegue in sequenza:
 
 1. **Pre-processing della query** — normalizza articoli di legge (es. "art. 10 bv" → "Art. 10 BV"), espande sigle trilingui (BV = Cost. = Cst.), gestisce abbreviazioni cantonali, rimuove stopword.
 2. **Ottimizzazione AI** — chiede a GPT-4o di riformulare la query in forma giuridica ottimale (de/fr/it), estraendo il concetto principale separato dai riferimenti normativi.
@@ -29,30 +33,65 @@ La ricerca principale (`/cerca_stream`) esegue queste operazioni in pipeline:
 4. **Merge + reranking** — i risultati delle due fonti vengono uniti, deduplicati e riordinati (prima per corte federale/cantonale, poi per data, poi reranking AI).
 5. **Stream SSE** — ogni risultato viene elaborato e inviato al client appena pronto, senza aspettare il completamento di tutti.
 
+### Frontend summarize (`sententia-summarize.html`)
+
+Il frontend di riassunto interroga `/sintesi_federal` passando un codice sentenza (es. `6B_51/2021`).
+
+La pipeline backend:
+
+1. **Recupero testo** — tenta prima da bger.li costruendo l'URL direttamente dal codice; se non trovato, cerca su Entscheidsuche per numero di ruolo.
+2. **Riassunto AI** — invia il testo (max 8000 caratteri) a `gpt-4o-mini` con prompt strutturato in it/de/fr, che produce un riassunto con: fatti, questione giuridica, considerazioni, dispositivo.
+3. **Risposta JSON** — restituisce la sintesi insieme a metadati (tribunale, data, codice, URL, statutes).
+
 ---
 
 ## Endpoint API
+
+### Ricerca
 
 | Metodo | Path | Descrizione |
 |--------|------|-------------|
 | `GET` | `/cerca` | Ricerca JSON sincrona (tutti i risultati in un colpo) |
 | `GET` | `/cerca_stream` | Ricerca SSE streaming (risultati in arrivo progressivo) |
-| `GET` | `/sintesi` | Riassunto AI di una sentenza (alias `/sintesi_federal`) |
-| `GET` | `/sintesi_federal` | Riassunto AI — riceve `codice` (es. `BGE 141 III 28`) |
-| `GET` | `/articolo_ocl` | Testo di un articolo di legge via OpenCaseLaw MCP |
-| `GET` | `/articolo_fedlex` | Testo di un articolo di legge via fedlex-connector.ch |
-| `GET` | `/testo_decisione` | Testo completo di una sentenza (da OpenCaseLaw o bger.li) |
-| `GET` | `/html_federale` | HTML pulito di una sentenza federale da bger.li |
-| `POST` | `/feedback` | Salva feedback utente (invia email via SMTP) |
-| `GET` | `/health` | Health check |
 
-### Parametri principali di `/cerca_stream`
+**Parametri principali di `/cerca_stream`:**
 
 | Parametro | Tipo | Descrizione |
 |-----------|------|-------------|
 | `query` | string | Query in testo libero (de/fr/it) |
 | `canton` | string | Filtro cantone opzionale (es. `ti`, `zh`, `ge`) |
 | `limit` | int | Numero massimo di risultati (default 10) |
+
+### Riassunto
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| `GET` | `/sintesi_federal` | Riassunto AI strutturato di una sentenza |
+| `GET` | `/sintesi` | Alias di `/sintesi_federal` (compatibilità legacy) |
+
+**Parametri:**
+
+| Parametro | Tipo | Descrizione |
+|-----------|------|-------------|
+| `codice` | string | Codice sentenza (es. `6B_51/2021`, `BGE 141 III 28`) |
+| `lang` | string | Lingua del riassunto: `it`, `de`, `fr` (default `it`) |
+| `decision_id` | string | ID OCL opzionale per accesso diretto senza ricerca |
+
+### Articoli e testo decisioni
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| `GET` | `/articolo_ocl` | Testo di un articolo di legge federale via OpenCaseLaw |
+| `GET` | `/articolo_fedlex` | Testo di un articolo via fedlex-connector.ch |
+| `GET` | `/testo_decisione` | Testo completo di una sentenza (da OpenCaseLaw o bger.li) |
+| `GET` | `/html_federale` | HTML pulito di una sentenza federale da bger.li |
+
+### Utility
+
+| Metodo | Path | Descrizione |
+|--------|------|-------------|
+| `POST` | `/feedback` | Feedback utente (invia email via SMTP) |
+| `GET` | `/health` | Health check |
 
 ---
 
