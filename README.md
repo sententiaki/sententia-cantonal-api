@@ -90,8 +90,8 @@ Il file è organizzato in sezioni logiche:
 |-------------------------------|-----------|
 | 1–200 | Costanti, rilevamento tribunale/cantone/tipo |
 | 200–570 | Pre-processing query (normalizzazione, espansione articoli) |
-| 570–700 | Ottimizzazione query AI (`ottimizza_query`) |
-| 700–900 | Ricerca Ticino (`_cerca_sul_portale_ti`) — scraping portale cantonale TI |
-| 900–1230 | Ricerca Entscheidsuche ES + normalizzazione hit |
-| 1230–1500 | Endpoint `/cerca` e `/cerca_stream` — pipeline principale |
-| 1500–1820 | Endpoint sintesi, articoli, testo, feedback, health |
+| 570–710 | Ottimizzazione query AI (`ottimizza_query`) |
+| 710–870 | Helpers OpenCaseLaw (`_ocl_search`, `_ocl_full_text`) |
+| 870–1080 | Ricerca Entscheidsuche ES + normalizzazione hit |
+| 1080–1360 | Endpoint `/cerca` e `/cerca_stream` — pipeline principale |
+| 1360–1668 | Endpoint sintesi, articoli, testo, feedback, health |
