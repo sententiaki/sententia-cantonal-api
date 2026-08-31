@@ -252,7 +252,9 @@
     .results-inner { overflow-y:auto; padding:20px 16px; -webkit-overflow-scrolling:touch; }
 
     /* Summary card */
-    .sum-card-head { padding:18px 18px 14px; flex-direction:column; gap:8px; }
+    .sum-card-head { padding:16px 18px 14px; grid-template-columns:1fr; }
+    .sum-head-left { gap:4px; }
+    .sum-card-head .btn-outline { margin-top:10px; align-self:flex-start; }
     .sum-card-body { padding:18px 18px; font-size:15px; line-height:1.85; }
     .sum-card-toolbar { padding:12px 18px; }
     .sum-actions { flex-wrap:wrap; }
@@ -399,12 +401,19 @@
     box-shadow:0 2px 20px rgba(0,0,0,0.04);
   }
   .sum-card-head {
-    padding:28px 32px 20px;
+    padding:20px 32px 18px;
     border-bottom:1px solid var(--border);
-    display:flex; align-items:flex-start; justify-content:space-between; gap:16px;
+    display:grid; grid-template-columns:1fr auto; align-items:start; gap:16px;
   }
-  .sum-card-meta { font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:4px; }
-  .sum-card-date { font-size:17px; font-weight:800; letter-spacing:-0.02em; color:var(--black); }
+  .sum-head-left { display:flex; flex-direction:column; gap:5px; min-width:0; }
+  .sum-head-tribunal {
+    font-size:10px; font-weight:700; letter-spacing:0.09em; text-transform:uppercase;
+    color:var(--text-muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  .sum-head-code {
+    font-size:17px; font-weight:800; letter-spacing:-0.025em; color:var(--black); line-height:1.1;
+  }
+  .sum-head-date { font-size:12px; font-weight:500; color:var(--text-muted); white-space:nowrap; margin-top:2px; }
   .sum-ai-badge {
     display:inline-block; font-size:10px; font-weight:800; letter-spacing:0.12em;
     text-transform:uppercase; background:var(--black); color:var(--white);
@@ -647,7 +656,7 @@
         <span class="example-chip" onclick="fillAndSummarize('6B_302/2023')">6B_302/2023</span>
       </div>
     </div>
-    <div id="homeError" style="margin-top:12px;font-size:13px;color:#c00;text-align:center;min-height:18px;"></div>
+    <div id="homeError" style="margin-top:12px;font-size:13px;color:#111;text-align:center;min-height:18px;"></div>
   </div>
 </div>
 
@@ -995,7 +1004,7 @@ async function runSummarize(code, lang, fromHome = false) {
       const msg = _outerErr.name === 'AbortError'
       ? 'Timeout: the server took too long. Please try again in a few seconds.'
       : (_outerErr.message || 'Network error');
-    wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#c00;">
+    wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#111;">
       <strong>Error:</strong> ${esc(msg)}
     </div>`;
     return;
@@ -1024,10 +1033,10 @@ async function runSummarize(code, lang, fromHome = false) {
     wrap.innerHTML = `
       <div class="sum-card">
         <div class="sum-card-head">
-          <div>
-            <div class="sum-card-date">${esc(code)}</div>
-            <div class="sum-card-meta" style="margin-top:6px">${dateSentenza ? esc(dateSentenza) : '—'}</div>
-            <div class="sum-card-meta" style="margin-top:2px">${tribunale ? esc(tribunale) : '—'}</div>
+          <div class="sum-head-left">
+            <span class="sum-head-tribunal">${tribunale ? esc(tribunale) : '—'}</span>
+            <span class="sum-head-code">${esc(code)}</span>
+            <span class="sum-head-date">${dateSentenza ? esc(dateSentenza) : '—'}</span>
           </div>
           ${(_fedUrl || _decisionId) ? `<button class="btn-outline" style="flex-shrink:0;margin-top:2px;border-color:var(--black)" onclick="openDecision()">Full decision →</button>` : ''}
         </div>
@@ -1058,7 +1067,7 @@ async function runSummarize(code, lang, fromHome = false) {
       const homeError = document.getElementById('homeError');
       if (homeError) homeError.textContent = `Errore: ${e.message}`;
     } else {
-      wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#c00;">
+      wrap.innerHTML = `<div class="sum-card" style="padding:32px;text-align:center;color:#111;">
         <strong>Errore:</strong> ${esc(e.message)}
       </div>`;
     }
@@ -1218,7 +1227,7 @@ async function openDecision() {
   } catch(e) {
     document.getElementById('panelBody').innerHTML = `
       <div class="dec-meta">${esc(currentCode)}</div>
-      <div style="color:#c00;font-size:13px;margin-top:16px">Errore: ${esc(e.message)}</div>`;
+      <div style="color:#111;font-size:13px;margin-top:16px">Errore: ${esc(e.message)}</div>`;
   }
 }
 function escAttr(s) { return s.replace(/"/g,'&quot;'); }
@@ -1319,10 +1328,17 @@ async function openLaw(artKey, tagEl) {
 
     const srNum    = data.sr_number || '';
     const consDate = data.consolidation_date || '';
+    const titolo   = data.titolo_legge || '';
+    const abbr     = data.abbreviazione || '';
     const txt      = (data.testo || '').trim();
 
+    const abbrNote = abbr && abbr.toUpperCase() !== sigla.toUpperCase()
+      ? `<span style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:var(--text-muted);margin-left:6px">(${esc(abbr)})</span>`
+      : '';
+
     document.getElementById('panelBody').innerHTML = `
-      <div class="dec-meta">${srNum ? 'SR ' + esc(srNum) : esc(sigla)}${consDate ? ` · ${esc(consDate)}` : ''}</div>
+      <div class="dec-meta">${srNum ? 'SR ' + esc(srNum) : esc(sigla)}${consDate ? ` · ${esc(consDate)}` : ''}${abbrNote}</div>
+      ${titolo ? `<div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:14px">${esc(titolo)}</div>` : ''}
       <hr class="law-divider">
       ${renderArticleText(txt)}`;
 
@@ -1365,10 +1381,17 @@ function showToast(msg, isErr) {
 }
 
 /* ── URL HELPERS ── */
-function isBvgerCode(c) { return /^[A-Z]-\d+\/\d{4}$/i.test(c.trim()); }
+// Solo BGer (6B_302/2023) e BGE/ATF (143 II 268) vivono su bger.li.
+// BVGer (F-2684/2026), BStGer (SK.2020.62), cantonali → null.
+function _bgerLiCompatible(c) {
+  c = c.trim();
+  return /^[1-9][A-Z]{0,3}[_\/]\d+[\/]\d{4}$/i.test(c)          // 6B_302/2023
+      || /^(?:bge|atf)\s+\d+\s+[IVX]+/i.test(c)                  // BGE 143 II 268
+      || /^\d{2,3}\s+[IVX]{1,5}\s+\d+$/.test(c.trim());          // 143 II 268 (senza prefisso)
+}
 function costruisciUrlBger(c) {
-  if (isBvgerCode(c)) return null;
-  return `https://bger.li/${c.trim().replace(/^BGE\s+/i,'').replace(/[\s\/]/g,'-')}`;
+  if (!_bgerLiCompatible(c)) return null;
+  return `https://bger.li/${c.trim().replace(/^(?:BGE|ATF)\s+/i,'').replace(/[\s\/]/g,'-')}`;
 }
 
 /* ── Nav scroll shadow ── */

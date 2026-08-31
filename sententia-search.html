@@ -370,9 +370,23 @@
   }
   .center-search-bar.compact .csb-btn { padding:9px 18px; font-size:11px; }
   .csb-btn:hover { transform:scale(1.02); box-shadow:0 4px 18px rgba(17,17,17,0.18); }
+  .csb-tip {
+    display:inline-flex; align-items:center; gap:6px;
+    margin-top:24px; margin-bottom:2px;
+    padding:7px 14px; border-radius:8px;
+    background:rgba(17,17,17,0.04); border:1px solid rgba(17,17,17,0.08);
+    font-size:11px; color:var(--text-muted); letter-spacing:0; line-height:1.4;
+    transition:opacity 0.25s, max-height 0.3s; overflow:hidden; max-height:44px;
+  }
+  .csb-tip-label {
+    font-size:11px; font-weight:400; letter-spacing:0.04em; text-transform:uppercase;
+    color:var(--black); opacity:0.35; flex-shrink:0;
+  }
+  .csb-tip strong { font-weight:600; color:rgba(17,17,17,0.75); }
+  .center-search-bar.compact .csb-tip { opacity:0; max-height:0; pointer-events:none; }
   .csb-examples {
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
-    margin-top:12px; transition:opacity 0.25s, max-height 0.3s;
+    margin-top:14px; transition:opacity 0.25s, max-height 0.3s;
     overflow:hidden; max-height:50px;
   }
   .center-search-bar.compact .csb-examples { opacity:0; max-height:0; pointer-events:none; }
@@ -557,19 +571,20 @@
   .result-card:hover { box-shadow:0 8px 40px rgba(0,0,0,0.08); border-color:rgba(17,17,17,0.18); }
   @keyframes fadeUp { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
   .result-header {
-    padding:20px 26px 18px; border-bottom:1px solid var(--border);
-    display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap;
+    padding: 20px 26px 18px; border-bottom: 1px solid var(--border);
+    display: grid; grid-template-columns: 1fr auto; align-items: start; gap: 16px;
   }
-  .result-header-left { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
-  .result-index {
-    display:inline-flex; align-items:center; justify-content:center;
-    width:26px; height:26px; border-radius:50%;
-    background:var(--accent-dim); border:1px solid var(--accent-mid);
-    font-size:11px; font-weight:800; color:var(--black); flex-shrink:0;
+  .result-header-left { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+  .result-tribunal {
+    font-size: 13px; font-weight: 600; letter-spacing: 0.01em;
+    color: var(--text-muted); line-height: 1.35;
   }
-  .result-code { font-size:17px; font-weight:700; letter-spacing:-0.02em; color:var(--black); }
-  .result-tribunal { font-size:10px; font-weight:800; letter-spacing:0.1em; text-transform:uppercase; color:var(--text-muted); background:var(--bg-soft); border:1px solid var(--border); padding:3px 9px; border-radius:5px; }
-  .result-date { font-size:13px; font-weight:500; color:var(--text-muted); }
+  .result-code {
+    font-size: 17px; font-weight: 700; letter-spacing: -0.025em; color: var(--black); line-height: 1.1;
+  }
+  .result-header-right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; padding-top: 1px; flex-shrink: 0; }
+  .result-date { font-size: 12px; font-weight: 500; color: var(--text-muted); white-space: nowrap; }
+  .result-index { font-size: 10px; font-weight: 600; color: var(--text-muted); opacity: 0.4; letter-spacing: 0.03em; }
   .citation-badge {
     font-size:10px; font-weight:700; letter-spacing:0.06em;
     color:#7a6200; background:#fff8d6; border:1px solid #e8d96a;
@@ -683,6 +698,10 @@
   .dec-text { font-size:13px; line-height:1.85; color:#333; white-space:pre-wrap; }
   .dec-arts { display:flex; flex-wrap:wrap; gap:6px; margin-top:4px; }
 
+  /* Panel articles toolbar (above summary body, matches summarize page style) */
+  .panel-arts-toolbar { padding:10px 0 14px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; border-bottom:1px solid var(--border); margin-bottom:18px; }
+  .panel-arts-label { font-size:10px; font-weight:700; letter-spacing:0.12em; text-transform:uppercase; color:#ADADAD; flex-shrink:0; }
+
   /* Summarize panel */
   .sum-meta { font-size:12px; font-weight:600; color:var(--text-muted); margin-bottom:16px; }
   .sum-outcome {
@@ -710,6 +729,152 @@
   @keyframes sumBounce { 0%,80%,100%{transform:scale(0.6);background:var(--border)} 40%{transform:scale(1);background:var(--black)} }
   .sum-loading-label { font-size:12px; color:var(--text-muted); margin-top:12px; }
   .sum-divider { border:none; border-top:1px solid var(--border); margin:16px 0; }
+
+  /* ── FEEDBACK BUTTON & MODAL ── */
+  #feedbackBtn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 1200;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 9px 15px 9px 12px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.10);
+    font-family: var(--ff);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: box-shadow 0.18s var(--ease), color 0.18s, border-color 0.18s;
+  }
+  #feedbackBtn:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.14);
+    color: var(--black);
+    border-color: #ccc;
+  }
+  #feedbackBtn svg { flex-shrink: 0; }
+
+  #feedbackOverlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.25);
+    z-index: 1300;
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+    align-items: center;
+    justify-content: center;
+  }
+  #feedbackOverlay.open { display: flex; }
+
+  #feedbackModal {
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 28px 24px;
+    width: min(420px, calc(100vw - 32px));
+    box-shadow: 0 12px 48px rgba(0,0,0,0.16);
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+  #feedbackModal h3 {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 4px;
+    color: var(--black);
+  }
+  #feedbackModal .fb-sub {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 18px;
+    line-height: 1.5;
+  }
+  #feedbackModal label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    display: block;
+    margin-bottom: 6px;
+  }
+  #feedbackMsg {
+    width: 100%;
+    min-height: 100px;
+    resize: vertical;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-family: var(--ff);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--black);
+    background: var(--bg-soft);
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 14px;
+  }
+  #feedbackMsg:focus { border-color: #aaa; background: var(--white); }
+  #feedbackEmail {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-family: var(--ff);
+    font-size: 13px;
+    color: var(--black);
+    background: var(--bg-soft);
+    outline: none;
+    transition: border-color 0.15s;
+    margin-bottom: 20px;
+  }
+  #feedbackEmail:focus { border-color: #aaa; background: var(--white); }
+  .fb-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .fb-cancel {
+    padding: 9px 18px;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    background: transparent;
+    font-family: var(--ff);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .fb-cancel:hover { border-color: #aaa; color: var(--black); }
+  .fb-send {
+    padding: 9px 20px;
+    border: none;
+    border-radius: 999px;
+    background: var(--black);
+    font-family: var(--ff);
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--white);
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .fb-send:hover { opacity: 0.82; }
+  .fb-send:disabled { opacity: 0.45; cursor: not-allowed; }
+  #fbSuccess {
+    display: none;
+    text-align: center;
+    padding: 12px 0 4px;
+    font-size: 13px;
+    color: #16A34A;
+    font-weight: 600;
+  }
 
 </style>
 </head>
@@ -889,6 +1054,7 @@
               Search
             </button>
           </div>
+          <div class="csb-tip"><span class="csb-tip-label">Tip</span> For more precise results, include a <strong>legal basis</strong> — e.g. art. 336 CO or art. 146 CP.</div>
           <div class="csb-examples">
             <span class="search-examples-label">Es.</span>
             <span class="example-chip" onclick="fillAndSearch('Licenziamento abusivo del lavoratore art. 336 CO')">Licenziamento abusivo</span>
@@ -1155,6 +1321,8 @@ let allLoaded = [];
 let panelMode = null;
 let filtersCollapsed = false;
 let courtMode = 'all';  // 'all' | 'fed' | 'can'
+let _activeSearch  = null;  // SSE connection corrente — chiusa prima di aprirne una nuova
+let _searchGen     = 0;     // incrementato ad ogni nuova ricerca — scarta eventi stale
 
 const _TRIB_LABELS = {
   it: { bger:'Tribunale federale', bvger:'Trib. amm. federale', bstger:'Trib. penale federale' },
@@ -1296,24 +1464,52 @@ function expandToSearch() {
 
 /* ── COURT NAME MAP (full names in all 3 languages) ── */
 const _COURT_NAMES = {
-  bger:    { it: 'Tribunale federale',                de: 'Bundesgericht',              fr: 'Tribunal fédéral' },
-  bvger:   { it: 'Tribunale amministrativo federale', de: 'Bundesverwaltungsgericht',   fr: 'Tribunal administratif fédéral' },
-  bstger:  { it: 'Tribunale penale federale',         de: 'Bundesstrafgericht',         fr: 'Tribunal pénal fédéral' },
-  bpatger: { it: 'Tribunale federale dei brevetti',   de: 'Bundespatentgericht',        fr: 'Tribunal fédéral des brevets' },
+  bger:     { abbr: 'BGer',    it: 'Tribunale federale',                de: 'Bundesgericht',              fr: 'Tribunal fédéral' },
+  bvger:    { abbr: 'BVGer',   it: 'Tribunale amministrativo federale', de: 'Bundesverwaltungsgericht',   fr: 'Tribunal administratif fédéral' },
+  bstger:   { abbr: 'BStGer',  it: 'Tribunale penale federale',         de: 'Bundesstrafgericht',         fr: 'Tribunal pénal fédéral' },
+  bpatger:  { abbr: 'BPatGer', it: 'Tribunale federale dei brevetti',   de: 'Bundespatentgericht',        fr: 'Tribunal fédéral des brevets' },
+  cantonal: {                   it: 'Tribunale cantonale',               de: 'Kantonsgericht',             fr: 'Tribunal cantonal' },
 };
 const _CANTON_NAMES = {
-  ti: { it: 'Ticino',   de: 'Tessin', fr: 'Tessin'  },
-  zh: { it: 'Zurigo',   de: 'Zürich', fr: 'Zurich'  },
-  be: { it: 'Berna',    de: 'Bern',   fr: 'Berne'   },
-  ge: { it: 'Ginevra',  de: 'Genf',   fr: 'Genève'  },
-  vd: { it: 'Vaud',     de: 'Waadt',  fr: 'Vaud'    },
+  ag: { it: 'Argovia',              de: 'Aargau',                fr: 'Argovie'                      },
+  ai: { it: 'Appenzello Interno',   de: 'Appenzell Innerrhoden', fr: 'Appenzell Rhodes-Intérieures'  },
+  ar: { it: 'Appenzello Esterno',   de: 'Appenzell Ausserrhoden',fr: 'Appenzell Rhodes-Extérieures'  },
+  be: { it: 'Berna',                de: 'Bern',                  fr: 'Berne'                        },
+  bl: { it: 'Basilea Campagna',     de: 'Basel-Landschaft',      fr: 'Bâle-Campagne'                },
+  bs: { it: 'Basilea Città',        de: 'Basel-Stadt',           fr: 'Bâle-Ville'                   },
+  fr: { it: 'Friburgo',             de: 'Freiburg',              fr: 'Fribourg'                     },
+  ge: { it: 'Ginevra',              de: 'Genf',                  fr: 'Genève'                       },
+  gl: { it: 'Glarona',              de: 'Glarus',                fr: 'Glaris'                       },
+  gr: { it: 'Grigioni',             de: 'Graubünden',            fr: 'Grisons'                      },
+  ju: { it: 'Giura',                de: 'Jura',                  fr: 'Jura'                         },
+  lu: { it: 'Lucerna',              de: 'Luzern',                fr: 'Lucerne'                      },
+  ne: { it: 'Neuchâtel',            de: 'Neuenburg',             fr: 'Neuchâtel'                    },
+  nw: { it: 'Nidvaldo',             de: 'Nidwalden',             fr: 'Nidwald'                      },
+  ow: { it: 'Obvaldo',              de: 'Obwalden',              fr: 'Obwald'                       },
+  sg: { it: 'San Gallo',            de: 'St. Gallen',            fr: 'Saint-Gall'                   },
+  sh: { it: 'Sciaffusa',            de: 'Schaffhausen',          fr: 'Schaffhouse'                  },
+  so: { it: 'Soletta',              de: 'Solothurn',             fr: 'Soleure'                      },
+  sz: { it: 'Svitto',               de: 'Schwyz',                fr: 'Schwytz'                      },
+  tg: { it: 'Turgovia',             de: 'Thurgau',               fr: 'Thurgovie'                    },
+  ti: { it: 'Ticino',               de: 'Tessin',                fr: 'Tessin'                       },
+  ur: { it: 'Uri',                  de: 'Uri',                   fr: 'Uri'                          },
+  vd: { it: 'Vaud',                 de: 'Waadt',                 fr: 'Vaud'                         },
+  vs: { it: 'Vallese',              de: 'Wallis',                fr: 'Valais'                       },
+  zg: { it: 'Zugo',                 de: 'Zug',                   fr: 'Zoug'                         },
+  zh: { it: 'Zurigo',               de: 'Zürich',                fr: 'Zurich'                       },
 };
 function courtFullName(r, lang) {
   const l = lang || 'it';
-  if (r.tribunal_key && _COURT_NAMES[r.tribunal_key])
-    return _COURT_NAMES[r.tribunal_key][l] || _COURT_NAMES[r.tribunal_key]['it'];
-  if (r.canton_key && _CANTON_NAMES[r.canton_key])
-    return (_COURT_NAMES['cantonal']?.[l] || 'Tribunale cantonale') + ' — ' + (_CANTON_NAMES[r.canton_key][l] || r.canton_key.toUpperCase());
+  if (r.tribunal_key && _COURT_NAMES[r.tribunal_key]) {
+    const c = _COURT_NAMES[r.tribunal_key];
+    const full = c[l] || c['it'];
+    return c.abbr ? `${c.abbr} — ${full}` : full;
+  }
+  if (r.canton_key) {
+    const courtLabel = (_COURT_NAMES['cantonal'][l] || 'Tribunale cantonale');
+    const cantonName = _CANTON_NAMES[r.canton_key.toLowerCase()]?.[l] || r.canton_key.toUpperCase();
+    return `${courtLabel} — ${cantonName}`;
+  }
   return r.tribunal || '—';
 }
 
@@ -1407,6 +1603,10 @@ async function startSearch() {
   const q = document.getElementById('centerInput').value.trim();
   if (!q) return;
 
+  // Chiudi connessione SSE precedente e assegna nuova generazione
+  if (_activeSearch) { _activeSearch.close(); _activeSearch = null; }
+  const gen = ++_searchGen; // ogni ricerca ha un ID univoco; eventi stale vengono scartati
+
   if (!isExpanded) expandToSearch();
 
   const es = document.getElementById('emptySearchState');
@@ -1449,8 +1649,22 @@ async function startSearch() {
 
   const sseUrl = `${SEARCH_API}/cerca_stream?${params}`;
   const src = new EventSource(sseUrl);
+  _activeSearch = src;
+
+  const _sseTimeout = setTimeout(() => {
+    if (gen !== _searchGen) return;
+    src.close();
+    if (_activeSearch === src) _activeSearch = null;
+    document.querySelectorAll('.skeleton-card').forEach(s => s.remove());
+    const errEl = document.createElement('div');
+    errEl.style.cssText = 'padding:32px 20px;text-align:center;color:var(--text-muted);font-size:13px;line-height:1.6';
+    errEl.textContent = 'Ricerca scaduta — riprova.';
+    document.getElementById('resultsList').appendChild(errEl);
+    setStatus('idle', 'Ricerca scaduta — riprova.');
+  }, 20000);
 
   src.onmessage = (e) => {
+    if (gen !== _searchGen) return; // evento stale da ricerca precedente — scarta
     const d = JSON.parse(e.data);
     if (d.type === 'status') {
       setStatus('busy', d.message);
@@ -1460,22 +1674,24 @@ async function startSearch() {
       const sk = document.getElementById(`sk-${r.rank}`);
       if (sk) sk.replaceWith(buildCard(r));
       else document.getElementById('resultsList').appendChild(buildCard(r));
-      // Apply active filters immediately to the new card
       applyFilters();
       updateCounts();
       document.getElementById('resultsMetaCount').textContent = `${allLoaded.length} / 8`;
     } else if (d.type === 'done') {
+      clearTimeout(_sseTimeout);
       src.close();
+      if (_activeSearch === src) _activeSearch = null; // non azzerare se già sostituito da nuova ricerca
       const hint = d.query_ottimizzata && d.query_ottimizzata !== q
         ? ` · Query: "${d.query_ottimizzata}"` : '';
       setStatus('idle', `${d.totale} decisions found${hint} · ${now()}`);
       document.querySelectorAll('.skeleton-card').forEach(s => s.remove());
-      applyFilters(); // final pass after skeletons removed
+      applyFilters();
       if (allLoaded.length > 0) document.getElementById('loadMoreWrap').style.display = 'block';
     } else if (d.type === 'error') {
+      clearTimeout(_sseTimeout);
       src.close();
+      if (_activeSearch === src) _activeSearch = null;
       document.querySelectorAll('.skeleton-card').forEach(s => s.remove());
-      // Mostra il messaggio di errore direttamente nella lista risultati
       const errEl = document.createElement('div');
       errEl.style.cssText = 'padding:32px 20px;text-align:center;color:var(--text-muted);font-size:13px;line-height:1.6';
       errEl.textContent = d.message;
@@ -1485,7 +1701,10 @@ async function startSearch() {
   };
 
   src.onerror = () => {
+    if (gen !== _searchGen) return;
+    clearTimeout(_sseTimeout);
     src.close();
+    if (_activeSearch === src) _activeSearch = null;
     setStatus('idle', 'Connection error — check server.');
     document.querySelectorAll('.skeleton-card').forEach(s => s.remove());
   };
@@ -1523,12 +1742,12 @@ function buildCard(r) {
   d.innerHTML = `
     <div class="result-header">
       <div class="result-header-left">
-        <span class="result-index">${r.rank}</span>
-        <span class="result-code">${r.code || '—'}</span>
         <span class="result-tribunal">${courtFullName(r, lang)}</span>
-        ${citBadge}
+        <span class="result-code">${r.code || '—'}</span>
       </div>
-      <span class="result-date">${r.date}</span>
+      <div class="result-header-right">
+        <span class="result-date">${r.date}</span>
+      </div>
     </div>
     <div class="result-body"><p class="result-summary">${getSummary(r, lang)}</p></div>
     <div class="result-footer">
@@ -1652,6 +1871,7 @@ async function openLaw(key, tagEl) {
       <div style="font-size:12px;color:var(--text-muted)">Loading…</div>
     </div>`;
 
+  let httpStatus = 0;
   try {
     const artLang = lang === 'fr' ? 'fr' : lang === 'de' ? 'de' : 'it';
     const artQ = `articolo_ocl?sigla=${encodeURIComponent(sigla)}&art=${encodeURIComponent(artNum)}&lang=${encodeURIComponent(artLang)}`;
@@ -1664,6 +1884,7 @@ async function openLaw(key, tagEl) {
       if (data.errore) throw new Error(data.errore);
     } catch(_) {
       const r = await fetch(`${SEARCH_API}/${artQ}`);
+      httpStatus = r.status;
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       data = await r.json();
       if (data.errore) throw new Error(data.errore);
@@ -1671,22 +1892,31 @@ async function openLaw(key, tagEl) {
 
     const srNum    = data.sr_number || '';
     const consDate = data.consolidation_date || '';
+    const titolo   = data.titolo_legge || '';
+    const abbr     = data.abbreviazione || '';
     const txt      = (data.testo || '').trim();
 
+    // Show official abbreviation if different from what user typed (e.g. LRCF → LResp)
+    const abbrNote = abbr && abbr.toUpperCase() !== sigla.toUpperCase()
+      ? `<span style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:var(--text-muted);margin-left:6px">(${esc(abbr)})</span>`
+      : '';
+
     document.getElementById('panelBody').innerHTML = `
-      <div class="law-art-num">${srNum ? 'SR ' + esc(srNum) : esc(sigla)}${consDate ? ' · ' + esc(consDate) : ''}</div>
+      <div class="law-art-num">${srNum ? 'SR ' + esc(srNum) : esc(sigla)}${consDate ? ' · ' + esc(consDate) : ''}${abbrNote}</div>
+      ${titolo ? `<div style="font-size:12px;color:var(--text-muted);line-height:1.5;margin-bottom:14px">${esc(titolo)}</div>` : ''}
       <hr class="law-divider">
       ${renderArticleText(txt)}`;
     document.getElementById('panelBody').scrollTop = 0;
 
   } catch(e) {
-    // Fallback: probabilmente legge cantonale o abrogata
     const fedlexUrl = `https://www.fedlex.admin.ch/it/search?text=${encodeURIComponent(key)}`;
+    // 502/503/504 = il servizio esterno che fornisce i testi di legge non risponde
+    // (non confondere con "legge non trovata", che è un 404 onesto)
+    const msg = (httpStatus >= 500)
+      ? `Il servizio che fornisce i testi di legge non risponde al momento. Riprova più tardi.`
+      : `Testo non disponibile per <strong>${esc(sigla)}</strong> — potrebbe trattarsi di una legge cantonale, abrogata o non ancora indicizzata.`;
     document.getElementById('panelBody').innerHTML = `
-      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">
-        Testo non disponibile per <strong>${esc(sigla)}</strong> —
-        potrebbe trattarsi di una legge cantonale, abrogata o non ancora indicizzata.
-      </p>
+      <p style="font-size:13px;color:var(--text-muted);margin-bottom:12px">${msg}</p>
       <a href="${fedlexUrl}" target="_blank" style="font-size:12px;color:var(--black);font-weight:600;text-decoration:underline">
         Cerca su Fedlex.admin.ch →
       </a>`;
@@ -1823,13 +2053,11 @@ async function openSummarize(idx) {
       <div class="dec-meta">${esc(r.code || '—')} · ${esc(courtFullName(r, getActiveLang()))}</div>
       <div class="dec-date">${esc(r.date)}</div>
       <span class="sum-ai-badge">✦ AI Summary</span>
-      <hr class="law-divider">
-      <div class="sum-body">${renderSintesi(data.sintesi)}</div>
-      <hr class="law-divider">
-      <div class="dec-section">
-        <div class="dec-section-title">${artSectionLabel}</div>
-        <div class="dec-arts" style="margin-top:6px">${artTagsHtml}</div>
-      </div>`;
+      <div class="panel-arts-toolbar">
+        <span class="panel-arts-label">Articoli</span>
+        ${artTagsHtml || '<span style="font-size:12px;color:#ADADAD;">—</span>'}
+      </div>
+      <div class="sum-body">${renderSintesi(data.sintesi)}</div>`;
   } catch(e) {
     document.getElementById('panelBody').innerHTML = `
       <div class="dec-meta">${esc(r.code)}</div>
@@ -1863,11 +2091,8 @@ function applyFilters() {
   const yearFrom = parseInt(_ywFrom) || 0;
   const yearTo   = parseInt(_ywTo)   || 9999;
   document.querySelectorAll('.result-card:not(.skeleton-card)').forEach(card => {
-    const type = card.dataset.type || 'federal';
     const year = parseInt(card.dataset.year) || 0;
     let show = true;
-    if (courtMode === 'fed' && type !== 'federal')  show = false;
-    if (courtMode === 'can' && type !== 'cantonal') show = false;
     if (yearFrom && year < yearFrom) show = false;
     if (yearTo   && year > yearTo)   show = false;
     card.style.display = show ? '' : 'none';
@@ -1889,40 +2114,53 @@ async function loadMore() {
   const btn = document.querySelector('.btn-load-more');
   btn.textContent = 'Searching…'; btn.disabled = true;
 
+  // Chiudi eventuale connessione SSE ancora aperta (startSearch o loadMore precedente)
+  if (_activeSearch) { _activeSearch.close(); _activeSearch = null; }
+  const gen = ++_searchGen; // stessa protezione di startSearch
+
   const lang = getActiveLang();
   const yearFrom = _ywFrom;
   const yearTo   = (_ywTo && _ywTo !== '2026') ? _ywTo : '';
   const currentCount = allLoaded.length;
-  // Collect IDs already shown to exclude duplicates
-  const shownIds = new Set(allLoaded.map(r => r.id || r.code).filter(Boolean));
+  const shownIds = new Set(allLoaded.map(r => r.code).filter(Boolean));
 
   const params = new URLSearchParams({ query: lastQuery, lang, limit: '8', offset: String(currentCount) });
-  if (yearFrom)                              params.set('anno_da', yearFrom);
-  if (yearTo)                                params.set('anno_a',  yearTo);
-  if (courtMode === 'fed') params.set('tipo', 'federal');
-  if (courtMode === 'can') params.set('tipo', 'cantonal');
-  if (courtMode === 'all') params.set('tipo', 'all');
+  if (yearFrom)                params.set('anno_da', yearFrom);
+  if (yearTo)                  params.set('anno_a',  yearTo);
+  if (courtMode === 'fed')     params.set('tipo', 'federal');
+  if (courtMode === 'can')     params.set('tipo', 'cantonal');
+  if (courtMode === 'all')     params.set('tipo', 'all');
 
   const sseUrl = `${SEARCH_API}/cerca_stream?${params}`;
   const src = new EventSource(sseUrl);
+  _activeSearch = src; // tracciato: startSearch può chiuderlo se arriva filtro nuovo
   let newCount = 0;
 
+  const _lmTimeout = setTimeout(() => {
+    if (gen !== _searchGen) return;
+    src.close();
+    if (_activeSearch === src) _activeSearch = null;
+    btn.textContent = 'Search more decisions →';
+    btn.disabled = false;
+  }, 20000);
+
   src.onmessage = (e) => {
+    if (gen !== _searchGen) return; // stale — scarta
     const d = JSON.parse(e.data);
     if (d.type === 'result') {
       const r = normalizeResult(d);
-      // Skip if already shown
-      const rid = r.id || r.code;
-      if (rid && shownIds.has(rid)) return;
+      if (r.code && shownIds.has(r.code)) return; // skip duplicati
       r.rank = allLoaded.length + 1;
       allLoaded.push(r);
-      if (rid) shownIds.add(rid);
+      if (r.code) shownIds.add(r.code);
       document.getElementById('resultsList').appendChild(buildCard(r));
       applyFilters();
       newCount++;
-      document.getElementById('resultsMetaCount').textContent = `${allLoaded.length} results`;
+      document.getElementById('resultsMetaCount').textContent = `${allLoaded.length} / ${allLoaded.length}`;
     } else if (d.type === 'done') {
+      clearTimeout(_lmTimeout);
       src.close();
+      if (_activeSearch === src) _activeSearch = null;
       if (newCount === 0) {
         btn.textContent = 'No more results';
         btn.style.opacity = '0.45'; btn.style.cursor = 'default';
@@ -1931,14 +2169,19 @@ async function loadMore() {
         btn.disabled = false;
       }
     } else if (d.type === 'error') {
+      clearTimeout(_lmTimeout);
       src.close();
-      btn.textContent = 'Load 5 more results →';
+      if (_activeSearch === src) _activeSearch = null;
+      btn.textContent = 'Search more decisions →';
       btn.disabled = false;
     }
   };
   src.onerror = () => {
+    if (gen !== _searchGen) return;
+    clearTimeout(_lmTimeout);
     src.close();
-    btn.textContent = 'Load 5 more results →';
+    if (_activeSearch === src) _activeSearch = null;
+    btn.textContent = 'Search more decisions →';
     btn.disabled = false;
   };
 }
@@ -1984,6 +2227,44 @@ window.addEventListener('scroll', () => {
   if (_heroIconBg)  _heroIconBg.style.transform  = `translateY(calc(-50% + ${y * 0.25}px))`;
   if (_heroIconBgL) _heroIconBgL.style.transform = `translateY(${y * 0.15}px)`;
 }, { passive: true });
+
+/* ── FEEDBACK ── */
+function openFeedback() {
+  document.getElementById('feedbackOverlay').classList.add('open');
+  document.getElementById('feedbackMsg').focus();
+}
+function closeFeedback() {
+  document.getElementById('feedbackOverlay').classList.remove('open');
+  document.getElementById('feedbackMsg').value = '';
+  document.getElementById('feedbackEmail').value = '';
+  document.getElementById('fbSuccess').style.display = 'none';
+  document.getElementById('fbSendBtn').disabled = false;
+  document.getElementById('fbSendBtn').textContent = 'Send';
+}
+async function submitFeedback() {
+  const msg = document.getElementById('feedbackMsg').value.trim();
+  if (!msg) { document.getElementById('feedbackMsg').focus(); return; }
+  const email = document.getElementById('feedbackEmail').value.trim();
+  const btn = document.getElementById('fbSendBtn');
+  btn.disabled = true;
+  btn.textContent = 'Sending…';
+  try {
+    await fetch(`${SEARCH_API}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message: msg,
+        email: email || null,
+        query: lastQuery || null,
+        result_code: null,
+      }),
+    });
+  } catch(_) {}
+  document.getElementById('fbSuccess').style.display = 'block';
+  setTimeout(closeFeedback, 1800);
+}
 </script>
+
+
 </body>
 </html>
