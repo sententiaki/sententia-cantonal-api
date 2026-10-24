@@ -1301,7 +1301,7 @@ _SINTESI_USER = {
         "**2. Articoli principali applicati**\n"
         "Elenca in modo puntuale tutti gli articoli di legge citati o applicati (indicando codice e numero, es. art. 41 CO, art. 146 CP).\n\n"
         "**3. Considerazioni del Tribunale**\n"
-        "Esponi il ragionamento giuridico adottato dalla corte: interpretazione normativa, bilanciamento degli interessi, "
+        "In 4-5 frasi: esponi il ragionamento giuridico adottato dalla corte: interpretazione normativa, bilanciamento degli interessi, "
         "giurisprudenza richiamata e argomenti decisivi.\n\n"
         "**4. Dispositivo e implicazioni**\n"
         "In 2 frasi: esito del giudizio (accoglimento/rigetto/rinvio) e principale implicazione pratica.\n\n"
@@ -1315,7 +1315,7 @@ _SINTESI_USER = {
         "**2. Massgebende Rechtsartikel**\n"
         "Liste alle zitierten oder angewendeten Gesetzesartikel auf (mit Angabe des Gesetzes und Nummer, z.B. Art. 41 OR).\n\n"
         "**3. Erwägungen des Gerichts**\n"
-        "Stelle die rechtliche Argumentation des Gerichts dar: Normeninterpretation, Interessenabwägung, "
+        "In 4-5 Sätzen: stelle die rechtliche Argumentation des Gerichts dar: Normeninterpretation, Interessenabwägung, "
         "herangezogene Rechtsprechung und entscheidende Argumente.\n\n"
         "**4. Dispositiv und Implikationen**\n"
         "In 2 Sätzen: Urteilsergebnis (Gutheissung/Abweisung/Rückweisung) und wichtigste praktische Implikation.\n\n"
@@ -1329,7 +1329,7 @@ _SINTESI_USER = {
         "**2. Articles principaux appliqués**\n"
         "Listez tous les articles de loi cités ou appliqués (avec indication du code et du numéro, ex. art. 41 CO).\n\n"
         "**3. Considérants du Tribunal**\n"
-        "Exposez le raisonnement juridique: interprétation normative, pesée des intérêts, "
+        "En 4-5 phrases: exposez le raisonnement juridique: interprétation normative, pesée des intérêts, "
         "jurisprudence citée et arguments décisifs.\n\n"
         "**4. Dispositif et implications**\n"
         "En 2 phrases: issue du jugement (admission/rejet/renvoi) et principale implication pratique.\n\n"
@@ -1439,7 +1439,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     ai = AsyncOpenAI(api_key=api_key, timeout=90.0)
     try:
         msg = await ai.chat.completions.create(
-            model="gpt-6-luna", max_completion_tokens=8000,
+            model="gpt-6-luna", max_completion_tokens=2000,
             messages=[
                 {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
                 {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:8000])},
