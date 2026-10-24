@@ -640,7 +640,7 @@ async def ottimizza_query(query: str, ai: AsyncOpenAI, http: httpx.AsyncClient |
 
     try:
         resp = await ai.chat.completions.create(
-            model="gpt-6-luna", max_completion_tokens=250, temperature=0,
+            model="gpt-6-luna", max_completion_tokens=2000,
             messages=[
                 {"role": "system", "content": _OPTIMIZER_SYSTEM},
                 {"role": "user",   "content": f'Query: "{concetto}"'},
@@ -697,7 +697,7 @@ async def genera_riassunto(testo: str, lang: str, ai: AsyncOpenAI) -> str:
         return ""
     try:
         resp = await ai.chat.completions.create(
-            model="gpt-6-luna", max_completion_tokens=200, temperature=0.2,
+            model="gpt-6-luna", max_completion_tokens=2000,
             messages=[
                 {"role": "system", "content": _SUMMARY_SYSTEM.get(lang, _SUMMARY_SYSTEM["it"])},
                 {"role": "user",   "content": testo[:6000]},
@@ -984,8 +984,7 @@ async def _ai_rerank(hits: list[dict], query: str, ai: AsyncOpenAI) -> list[dict
     try:
         resp = await ai.chat.completions.create(
             model="gpt-6-luna",
-            max_completion_tokens=60,
-            temperature=0,
+            max_completion_tokens=2000,
             messages=[
                 {"role": "system", "content":
                     "Sei un esperto giuridico svizzero. Valuta la rilevanza di estratti di sentenze "
@@ -1440,7 +1439,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     ai = AsyncOpenAI(api_key=api_key, timeout=90.0)
     try:
         msg = await ai.chat.completions.create(
-            model="gpt-6-luna", max_completion_tokens=1400,
+            model="gpt-6-luna", max_completion_tokens=8000,
             messages=[
                 {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
                 {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:8000])},
