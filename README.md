@@ -26,7 +26,7 @@ Il frontend di ricerca interroga `/cerca_stream` e riceve i risultati via SSE ma
 La pipeline backend esegue in sequenza:
 
 1. **Pre-processing della query** — normalizza articoli di legge (es. "art. 10 bv" → "Art. 10 BV"), espande sigle trilingui (BV = Cost. = Cst.), gestisce abbreviazioni cantonali, rimuove stopword.
-2. **Ottimizzazione AI** — chiede a GPT-4o di riformulare la query in forma giuridica ottimale (de/fr/it), estraendo il concetto principale separato dai riferimenti normativi.
+2. **Ottimizzazione AI** — chiede a `gpt-6-luna` di riformulare la query in forma giuridica ottimale (de/fr/it), estraendo il concetto principale separato dai riferimenti normativi.
 3. **Ricerca parallela su due fonti**:
    - **OpenCaseLaw** (`mcp.opencaselaw.ch`) — API MCP per sentenze federali e cantonali.
    - **Entscheidsuche** (`es-proxy.sententia-ki.workers.dev`) — proxy Cloudflare su Elasticsearch con ~1M di decisioni; usa `simple_query_string` con query trilingue.
@@ -40,7 +40,7 @@ Il frontend di riassunto interroga `/sintesi_federal` passando un codice sentenz
 La pipeline backend:
 
 1. **Recupero testo** — tenta prima da bger.li costruendo l'URL direttamente dal codice; se non trovato, cerca su Entscheidsuche per numero di ruolo.
-2. **Riassunto AI** — invia il testo (max 8000 caratteri) a `gpt-4o-mini` con prompt strutturato in it/de/fr, che produce un riassunto con: fatti, questione giuridica, considerazioni, dispositivo.
+2. **Riassunto AI** — invia il testo (max 8000 caratteri) a `gpt-6-luna` con prompt strutturato in it/de/fr, che produce un riassunto con: fatti, articoli applicati, considerazioni (4-5 frasi), dispositivo.
 3. **Risposta JSON** — restituisce la sintesi insieme a metadati (tribunale, data, codice, URL, statutes).
 
 ---
@@ -117,7 +117,7 @@ OPENAI_API_KEY=sk-... uvicorn main:app --port 8002 --reload
 ```
 
 **Variabile d'ambiente richiesta:**
-- `OPENAI_API_KEY` — usata per ottimizzazione query e generazione riassunti (modello: `gpt-4o-mini` per query, `gpt-4o` per riassunti)
+- `OPENAI_API_KEY` — usata per ottimizzazione query e generazione riassunti (modello: `gpt-6-luna` per tutte le chiamate AI)
 
 ---
 
