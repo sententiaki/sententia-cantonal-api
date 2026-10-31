@@ -1439,13 +1439,15 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
     ai = AsyncOpenAI(api_key=api_key, timeout=90.0)
     try:
         msg = await ai.chat.completions.create(
-            model="gpt-6-luna", max_completion_tokens=2000,
+            model="gpt-6-luna", max_completion_tokens=5000,
             messages=[
                 {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
                 {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:8000])},
             ],
         )
-        sintesi = msg.choices[0].message.content
+        sintesi = msg.choices[0].message.content or ""
+        if not sintesi.strip():
+            return JSONResponse({"errore": "Il modello AI non ha prodotto una risposta. Riprova."}, status_code=500)
     except Exception as exc:
         return JSONResponse({"errore": f"Errore AI: {exc}"}, status_code=500)
 
