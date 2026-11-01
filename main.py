@@ -1398,7 +1398,7 @@ async def _fetch_bger_text(url: str, http: httpx.AsyncClient) -> str:
         or soup.find("body")
     )
     text = (content or soup).get_text(" ", strip=True)
-    return text[:8000] if len(text) >= 100 else ""
+    return text if len(text) >= 100 else ""
 
 
 def _trim_testo(text: str, head: int = 10000, tail: int = 5000) -> str:
