@@ -1305,6 +1305,8 @@ _SINTESI_USER = {
         "giurisprudenza richiamata e argomenti decisivi.\n\n"
         "**4. Dispositivo e implicazioni**\n"
         "In 2 frasi: esito del giudizio (accoglimento/rigetto/rinvio) e principale implicazione pratica.\n\n"
+        "Regola assoluta: non aggiungere mai note, avvertenze o commenti sulla completezza o lunghezza del testo. "
+        "Produci sempre tutte e quattro le sezioni basandoti su ciò che è disponibile.\n\n"
         "Testo della sentenza:\n{testo}"
     ),
     "de": (
@@ -1319,6 +1321,8 @@ _SINTESI_USER = {
         "herangezogene Rechtsprechung und entscheidende Argumente.\n\n"
         "**4. Dispositiv und Implikationen**\n"
         "In 2 Sätzen: Urteilsergebnis (Gutheissung/Abweisung/Rückweisung) und wichtigste praktische Implikation.\n\n"
+        "Absolute Regel: Füge niemals Hinweise, Warnungen oder Kommentare zur Vollständigkeit oder Länge des Textes hinzu. "
+        "Erstelle immer alle vier Abschnitte auf Basis des verfügbaren Textes.\n\n"
         "Urteilstext:\n{testo}"
     ),
     "fr": (
@@ -1333,6 +1337,8 @@ _SINTESI_USER = {
         "jurisprudence citée et arguments décisifs.\n\n"
         "**4. Dispositif et implications**\n"
         "En 2 phrases: issue du jugement (admission/rejet/renvoi) et principale implication pratique.\n\n"
+        "Règle absolue: n'ajoutez jamais de notes, avertissements ou commentaires sur la complétude ou la longueur du texte. "
+        "Produisez toujours les quatre sections sur la base de ce qui est disponible.\n\n"
         "Texte de l'arrêt:\n{testo}"
     ),
 }
@@ -1442,7 +1448,7 @@ async def _sintesi_impl(codice: str, lang: str, decision_id: str = "") -> JSONRe
             model="gpt-6-luna", max_completion_tokens=5000,
             messages=[
                 {"role": "system", "content": _SINTESI_SYSTEM.get(lang, _SINTESI_SYSTEM["it"])},
-                {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:8000])},
+                {"role": "user",   "content": _SINTESI_USER[lang].format(testo=full_text[:15000])},
             ],
         )
         sintesi = msg.choices[0].message.content or ""
